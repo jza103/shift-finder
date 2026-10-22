@@ -191,15 +191,18 @@ footer { color: var(--muted); font-size: 13px; }
       <p>Set up a Shortcut once. After that, open the schedule PDF in Mail, tap <b>Share</b>, and tap <b>Shift Finder</b>. This page opens with the schedule loaded. The PDF travels inside the link, which stays on your phone, so nothing is uploaded.</p>
       <p class="row" id="shortcutGet" hidden><a class="btn" id="shortcutLink" rel="noopener">Get the shortcut</a> <span class="note">Tap Add Shortcut, then you're done.</span></p>
       <ol>
-        <li>Open the <b>Shortcuts</b> app, tap <b>+</b>, and rename the new shortcut <b>Shift Finder</b>.</li>
-        <li>Tap the <b>ⓘ</b> button and turn on <b>Show in Share Sheet</b>. In the block that appears at the top, tap the input types and choose only <b>PDFs</b>. Set <i>If there's no input</i> to <b>Ask For Files</b>.</li>
-        <li>Add <b>Base64 Encode</b>. Tap its arrow and set <b>Line Breaks</b> to <b>None</b>.</li>
-        <li>Add <b>Copy to Clipboard</b>. Optionally tap its arrow and turn on <b>Local Only</b>.</li>
-        <li>Add <b>Text</b>. Type <code>https://jza103.github.io/shift-finder/#pdf=</code> and right after the <code>=</code> insert the <b>Base64 Encoded</b> variable.</li>
-        <li>Add <b>Open URLs</b>. Tap <b>Done</b>.</li>
+        <li>Open the <b>Shortcuts</b> app and tap <b>+</b> to start a new shortcut. Tap its name at the top and rename it <b>Shift Finder</b>.</li>
+        <li>Search the actions for <b>Base64 Encode</b> and add it. Tap the blue <b>Input</b> word in it and choose <b>Shortcut Input</b>.</li>
+        <li>A block appears at the very top that reads <i>Receive <b>Any</b> input from <b>Nowhere</b></i>. Tap <b>Nowhere</b>, check <b>Share Sheet</b>, and tap Done. Optionally tap <b>Any</b> and leave only <b>PDFs</b> on, so the shortcut only shows up for PDFs.</li>
+        <li>Back in <b>Base64 Encode</b>, tap its small arrow to show more options and set <b>Line Breaks</b> to <b>None</b>.</li>
+        <li>Add <b>Copy to Clipboard</b>. It fills in <b>Base64 Encoded</b> by itself.</li>
+        <li>Add <b>Text</b>. Type <code>https://jza103.github.io/shift-finder/#pdf=</code>, then, with the cursor right after the <code>=</code>, tap <b>Base64 Encoded</b> in the bar above the keyboard to insert it.</li>
+        <li>Add <b>Open URLs</b>. It fills in <b>Text</b> by itself. Tap <b>Done</b>.</li>
       </ol>
-      <p class="note">To preselect your name, start the link with your name: <code>…/shift-finder/#vanessa&amp;pdf=</code>. The page also remembers the last name you picked.</p>
-      <p class="note">If the page says the link was incomplete, tap <b>Paste from Shortcut</b>. If Safari won't open at all, change the Text step to <code>https://jza103.github.io/shift-finder/#paste</code> and use the paste button every time.</p>
+      <p class="note"><b>To use it:</b> open the email, tap the PDF, tap <b>Share</b>, and scroll to the bottom of the list to tap <b>Shift Finder</b>. If it isn't listed, tap <b>Edit Actions…</b> at the bottom and add it. The first time, tap <b>Allow</b> when it asks to open the link.</p>
+      <p class="note"><b>No “Nowhere” block?</b> Look for the shortcut's Details: tap the name at the top, or the <b>ⓘ</b> or <b>⋯</b> button. Turn on <b>Show in Share Sheet</b> there.</p>
+      <p class="note"><b>No Line Breaks option, or the shortcut errors when it opens Safari?</b> Change the Text step to just <code>https://jza103.github.io/shift-finder/#paste</code>. The page then shows a <b>Paste from Shortcut</b> button: tap it, then tap <b>Paste</b>. This is two extra taps but works every time.</p>
+      <p class="note">To preselect your name, use <code>…/shift-finder/#vanessa&amp;pdf=</code>. The page also remembers the last name you picked.</p>
     </div>
   </details>
 
