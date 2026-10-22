@@ -188,9 +188,10 @@ footer { color: var(--muted); font-size: 13px; }
   <details class="howto" id="howto">
     <summary>iPhone: open the schedule straight from Mail</summary>
     <div class="howto-body">
-      <p>Set up a Shortcut once. After that, open the schedule PDF in Mail, tap <b>Share</b>, and tap <b>Shift Finder</b>. This page opens; tap <b>Paste from Shortcut</b>, then <b>Paste</b>, and your week appears. The Shortcut hands the PDF over through your clipboard, so it stays on your phone and nothing is uploaded.</p>
+      <p>Add a Shortcut once. After that, open the schedule PDF in Mail, tap <b>Share</b>, and tap the shortcut. This page opens; tap <b>Paste from Shortcut</b>, then <b>Paste</b>, and your week appears. The Shortcut hands the PDF over through your clipboard, so it stays on your phone and nothing is uploaded.</p>
       <p class="note"><b>Already made the shortcut?</b> Edit its <b>Text</b> step so it's only <code>https://jza103.github.io/shift-finder/#paste</code>: delete the <b>Base64 Encoded</b> bubble and change <code>#pdf=</code> to <code>#paste</code>. Nothing else needs to change.</p>
-      <p class="row" id="shortcutGet" hidden><a class="btn" id="shortcutLink" rel="noopener">Get the shortcut</a> <span class="note">Tap Add Shortcut, then you're done.</span></p>
+      <p class="row" id="shortcutGet" hidden><a class="btn" id="shortcutLink" rel="noopener">Get the shortcut</a> <span class="note">Tap <b>Add Shortcut</b> and you're set; skip the steps below. In the share sheet, look for the name it showed when you added it.</span></p>
+      <p class="note" id="buildOwn" hidden>Or build it yourself:</p>
       <ol>
         <li>Open the <b>Shortcuts</b> app and tap <b>+</b> to start a new shortcut. Tap its name at the top and rename it <b>Shift Finder</b>.</li>
         <li>Search the actions for <b>Base64 Encode</b> and add it. Tap the blue <b>Input</b> word in it and choose <b>Shortcut Input</b>.</li>
@@ -199,7 +200,7 @@ footer { color: var(--muted); font-size: 13px; }
         <li>Add <b>Text</b> and type <code>https://jza103.github.io/shift-finder/#paste</code></li>
         <li>Add <b>Open URLs</b>. It fills in <b>Text</b> by itself. Tap <b>Done</b>.</li>
       </ol>
-      <p class="note"><b>To use it:</b> open the email, tap the PDF, tap <b>Share</b>, and scroll to the bottom of the list to tap <b>Shift Finder</b>. If it isn't listed, tap <b>Edit Actions…</b> at the bottom and add it. The first time, tap <b>Allow</b> when it asks to open the link. On the page, tap <b>Paste from Shortcut</b>, then the <b>Paste</b> bubble your iPhone shows.</p>
+      <p class="note"><b>To use it:</b> open the email, tap the PDF, tap <b>Share</b>, and scroll to the bottom of the list to tap the shortcut. If it isn't listed, tap <b>Edit Actions…</b> at the bottom and add it. The first time, tap <b>Allow</b> when it asks to open the link. On the page, tap <b>Paste from Shortcut</b>, then the <b>Paste</b> bubble your iPhone shows.</p>
       <p class="note"><b>No “Nowhere” block?</b> Look for the shortcut's Details: tap the name at the top, or the <b>ⓘ</b> or <b>⋯</b> button. Turn on <b>Show in Share Sheet</b> there.</p>
       <p class="note">The page remembers the last name you picked, so after the first time your week shows up as soon as you paste.</p>
     </div>
@@ -512,7 +513,7 @@ footer { color: var(--muted); font-size: 13px; }
   const state = { doc: null, fileName: '', key: null, hashName: '' };
   // iCloud link to the ready-made "Shift Finder" Shortcut (Share → Copy iCloud Link in the Shortcuts app).
   // Leave empty to show only the build-it-yourself steps.
-  const SHORTCUT_LINK = '';
+  const SHORTCUT_LINK = 'https://www.icloud.com/shortcuts/6af661108f4c477687e930bb4aaf6017';
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const store = {
@@ -824,7 +825,7 @@ footer { color: var(--muted); font-size: 13px; }
   });
 
   if (inViewer) $('howto').hidden = true;
-  if (SHORTCUT_LINK) { $('shortcutLink').href = SHORTCUT_LINK; $('shortcutGet').hidden = false; }
+  if (SHORTCUT_LINK) { $('shortcutLink').href = SHORTCUT_LINK; $('shortcutGet').hidden = false; $('buildOwn').hidden = false; }
   renderEmpty();
   // On a phone, always offer the paste route next to Choose PDF, so a Shortcut run still works
   // when its link arrives without the schedule.

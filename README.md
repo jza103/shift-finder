@@ -8,7 +8,7 @@ The schedule is read entirely on your device. Nothing is uploaded.
 
 ## Using it on iPhone
 
-**Fastest: straight from Mail (one-time setup).** Build a small Shortcut. From then on, open the schedule PDF in Mail, tap **Share**, then **Shift Finder**. The page opens; tap **Paste from Shortcut**, then **Paste**, and your week appears. The steps are also on the page under *iPhone: open the schedule straight from Mail*.
+**Fastest: straight from Mail (one-time setup).** Add the ready-made Shortcut from https://www.icloud.com/shortcuts/6af661108f4c477687e930bb4aaf6017 (tap **Add Shortcut**), or build it with the steps below. From then on, open the schedule PDF in Mail, tap **Share**, then tap the shortcut. The page opens; tap **Paste from Shortcut**, then **Paste**, and your week appears. The steps are also on the page under *iPhone: open the schedule straight from Mail*.
 
 1. Open the **Shortcuts** app, tap **+**, and rename the new shortcut **Shift Finder** by tapping its name at the top.
 2. Add **Base64 Encode**. Tap the blue **Input** word in it and choose **Shortcut Input**.
@@ -17,7 +17,7 @@ The schedule is read entirely on your device. Nothing is uploaded.
 5. Add **Text**: `https://jza103.github.io/shift-finder/#paste`
 6. Add **Open URLs**.
 
-To use it, tap the PDF in Mail, tap **Share**, and scroll to the bottom to tap **Shift Finder**. If it isn't listed, use **Edit Actions…** at the bottom of the share sheet to add it.
+To use it, tap the PDF in Mail, tap **Share**, and scroll to the bottom to tap the shortcut. If it isn't listed, use **Edit Actions…** at the bottom of the share sheet to add it.
 
 The Shortcut hands the PDF to the page through the clipboard, so the schedule stays on the phone. Safari needs a tap before a page can read the clipboard, which is why there's a Paste button.
 
