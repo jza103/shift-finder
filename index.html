@@ -65,6 +65,7 @@ h1 { font-family: var(--display); font-weight: 700; font-size: clamp(34px, 8vw, 
   font: 600 15px/1 var(--body); border-radius: 8px; padding: 11px 16px; cursor: pointer;
   border: 1.5px solid var(--band); background: var(--band); color: var(--surface);
 }
+a.btn { display: inline-block; text-decoration: none; }
 .btn.ghost { background: transparent; color: var(--band); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
@@ -120,6 +121,12 @@ select {
 .status.err { color: var(--warn); }
 textarea.copybox { width: 100%; min-height: 160px; font: 14px/1.4 ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--bg); color: var(--ink); }
 .errorbox { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 12px 14px; }
+.howto { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0 16px; }
+.howto summary { font-family: var(--display); font-size: 20px; font-weight: 600; padding: 14px 0; cursor: pointer; }
+.howto-body { display: grid; gap: 10px; padding-bottom: 16px; font-size: 15px; }
+.howto-body p, .howto-body ol { margin: 0; }
+.howto-body ol { padding-left: 1.3em; display: grid; gap: 6px; }
+.howto code { font: 13px ui-monospace, Menlo, monospace; background: var(--bg); border-radius: 4px; padding: 1px 4px; overflow-wrap: anywhere; }
 footer { color: var(--muted); font-size: 13px; }
 @media (max-width: 420px) {
   .day { grid-template-columns: 1fr; gap: 8px; }
@@ -140,6 +147,7 @@ footer { color: var(--muted); font-size: 13px; }
     <h2 id="dropTitle">Weekly schedule PDF</h2>
     <p id="dropHint">Drag the PDF here, or choose it from your files. Use the PDF exported from Excel, not a photo or scan.</p>
     <div class="row">
+      <button class="btn" id="pasteBtn" type="button" hidden>Paste from Shortcut</button>
       <button class="btn" id="chooseBtn" type="button">Choose PDF</button>
       <span class="filemeta" id="fileMeta"></span>
     </div>
@@ -176,6 +184,24 @@ footer { color: var(--muted); font-size: 13px; }
     <div class="status" id="status" role="status"></div>
     <textarea class="copybox" id="copyBox" hidden readonly aria-label="Schedule text"></textarea>
   </section>
+
+  <details class="howto" id="howto">
+    <summary>iPhone: open the schedule straight from Mail</summary>
+    <div class="howto-body">
+      <p>Set up a Shortcut once. After that, open the schedule PDF in Mail, tap <b>Share</b>, and tap <b>Shift Finder</b>. This page opens with the schedule loaded. The PDF travels inside the link, which stays on your phone, so nothing is uploaded.</p>
+      <p class="row" id="shortcutGet" hidden><a class="btn" id="shortcutLink" rel="noopener">Get the shortcut</a> <span class="note">Tap Add Shortcut, then you're done.</span></p>
+      <ol>
+        <li>Open the <b>Shortcuts</b> app, tap <b>+</b>, and rename the new shortcut <b>Shift Finder</b>.</li>
+        <li>Tap the <b>ⓘ</b> button and turn on <b>Show in Share Sheet</b>. In the block that appears at the top, tap the input types and choose only <b>PDFs</b>. Set <i>If there's no input</i> to <b>Ask For Files</b>.</li>
+        <li>Add <b>Base64 Encode</b>. Tap its arrow and set <b>Line Breaks</b> to <b>None</b>.</li>
+        <li>Add <b>Copy to Clipboard</b>. Optionally tap its arrow and turn on <b>Local Only</b>.</li>
+        <li>Add <b>Text</b>. Type <code>https://jza103.github.io/shift-finder/#pdf=</code> and right after the <code>=</code> insert the <b>Base64 Encoded</b> variable.</li>
+        <li>Add <b>Open URLs</b>. Tap <b>Done</b>.</li>
+      </ol>
+      <p class="note">To preselect your name, start the link with your name: <code>…/shift-finder/#vanessa&amp;pdf=</code>. The page also remembers the last name you picked.</p>
+      <p class="note">If the page says the link was incomplete, tap <b>Paste from Shortcut</b>. If Safari won't open at all, change the Text step to <code>https://jza103.github.io/shift-finder/#paste</code> and use the paste button every time.</p>
+    </div>
+  </details>
 
   <footer>Locations come from the slanted column headers. Checks flag cells that don't match their column, typo-looking times, and a.m./p.m. that had to be assumed.</footer>
 </div>
@@ -481,7 +507,10 @@ footer { color: var(--muted); font-size: 13px; }
 (function () {
   const $ = (id) => document.getElementById(id);
   const inViewer = typeof window.claude !== 'undefined';
-  const state = { doc: null, fileName: '', key: null };
+  const state = { doc: null, fileName: '', key: null, hashName: '' };
+  // iCloud link to the ready-made "Shift Finder" Shortcut (Share → Copy iCloud Link in the Shortcuts app).
+  // Leave empty to show only the build-it-yourself steps.
+  const SHORTCUT_LINK = '';
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const store = {
@@ -513,11 +542,15 @@ footer { color: var(--muted); font-size: 13px; }
   }
 
   async function load(file) {
-    $('fileMeta').textContent = `Reading ${file.name}…`;
+    return loadBytes(file.name, new Uint8Array(await file.arrayBuffer()));
+  }
+
+  // onFail runs after the error is shown; the share-sheet hand-off uses it to offer the paste fallback.
+  async function loadBytes(name, data, onFail) {
+    $('fileMeta').textContent = `Reading ${name}…`;
     showErrors([]);
     try {
       if (!window.pdfjsLib) throw new Error('The PDF reader did not load. Check your connection and reload the page.');
-      const data = new Uint8Array(await file.arrayBuffer());
       const pdf = await pdfjsLib.getDocument({ data, verbosity: 0, isEvalSupported: false }).promise;
       const pages = [];
       for (let i = 1; i <= pdf.numPages; i++) pages.push((await (await pdf.getPage(i)).getTextContent()).items);
@@ -528,21 +561,99 @@ footer { color: var(--muted); font-size: 13px; }
           ? 'This PDF has no text in it, so it was probably scanned or photographed. Use the PDF exported from Excel.'
           : "This PDF doesn't look like a banquet service schedule: no page has a Function row.");
       }
-      state.doc = doc; state.fileName = file.name;
+      state.doc = doc; state.fileName = name;
       drop.classList.add('loaded');
       $('dropTitle').textContent = weekLabel(doc);
       $('dropHint').hidden = true;
+      $('pasteBtn').hidden = true;
       $('chooseBtn').textContent = 'Load a different PDF';
       $('chooseBtn').classList.add('ghost');
       const fm = $('fileMeta'); fm.replaceChildren();
-      fm.append(el('strong', null, file.name), document.createTextNode(` · ${doc.days.length} days · ${doc.people.length} names`));
+      fm.append(el('strong', null, name), document.createTextNode(` · ${doc.days.length} days · ${doc.people.length} names`));
       showErrors(doc.errors);
       fillPicker();
     } catch (err) {
       $('fileMeta').textContent = '';
       showErrors([err.message || String(err)]);
+      if (onFail) onFail();
     }
   }
+
+  // ---------- hand-off from the iPhone share sheet ----------
+  // The "Shift Finder" Shortcut base64-encodes the shared PDF, copies it to the clipboard, and opens
+  // this page as #pdf=<base64> (optionally #vanessa&pdf=…). A URL hash is never sent to the server,
+  // so the schedule still stays on the phone. If the link arrives cut short, the page offers to read
+  // the clipboard copy instead. #paste skips the link and goes straight to the paste button.
+  const SHARED_NAME = 'Schedule from the share sheet';
+  const safeDecode = (s) => { try { return decodeURIComponent(s); } catch (e) { return s; } };
+
+  // Returns the PDF bytes, or null if the text isn't a complete base64-encoded PDF.
+  function pdfFromBase64(text) {
+    let s = safeDecode(text || '').trim().replace(/ /g, '+').replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+    if (!s.startsWith('JVBER')) return null; // "%PDF" in base64
+    s = s.replace(/=+$/, '');
+    if (/[^A-Za-z0-9+/]/.test(s) || s.length % 4 === 1) return null;
+    let bin;
+    try { bin = atob(s + '==='.slice(0, (4 - s.length % 4) % 4)); } catch (e) { return null; }
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    // A complete PDF ends with %%EOF. Without this check a truncated link could load only some days.
+    if (!bin.slice(-1024).includes('%%EOF')) return null;
+    return bytes;
+  }
+
+  function readHash() {
+    const out = { name: '', pdf: '', paste: false };
+    for (const part of (location.hash || '').slice(1).split('&')) {
+      const eq = part.indexOf('=');
+      const key = eq < 0 ? '' : part.slice(0, eq).toLowerCase(), val = eq < 0 ? part : part.slice(eq + 1);
+      if (key === 'pdf') out.pdf = val;
+      else if (!key && val.toLowerCase() === 'paste') out.paste = true;
+      else if ((key === 'name' || !key) && val) out.name = safeDecode(val).toLowerCase();
+    }
+    return out;
+  }
+
+  function offerPaste(message) {
+    if (!navigator.clipboard || !navigator.clipboard.readText) return;
+    $('pasteBtn').hidden = false;
+    $('dropHint').hidden = false;
+    $('dropHint').textContent = message || 'Tap Paste from Shortcut, then tap Paste when your iPhone asks.';
+  }
+
+  function takeHash() {
+    const h = readHash();
+    state.hashName = h.name;
+    if (!h.pdf && !h.paste) return;
+    // Drop the PDF from the address bar and history; keep a name if one was given.
+    history.replaceState(null, '', location.pathname + location.search + (h.name ? '#' + slug(h.name) : ''));
+    if (h.paste) { offerPaste(); return; }
+    const linkFailed = 'The schedule didn’t come through the link in one piece. Tap Paste from Shortcut to load the copy the Shortcut put on your clipboard.';
+    const bytes = pdfFromBase64(h.pdf);
+    if (bytes) loadBytes(SHARED_NAME, bytes, () => offerPaste(linkFailed));
+    else { showErrors(['The schedule link was incomplete.']); offerPaste(linkFailed); }
+  }
+
+  $('pasteBtn').addEventListener('click', async () => {
+    let text = '';
+    try { text = await navigator.clipboard.readText(); }
+    catch (e) { showErrors(['Couldn’t read the clipboard. Tap Paste from Shortcut again and tap Paste when your iPhone asks.']); return; }
+    const bytes = pdfFromBase64(text);
+    if (!bytes) { showErrors(['The clipboard doesn’t hold a schedule. Open the PDF in Mail, tap Share, and tap Shift Finder first.']); return; }
+    // Best effort: don't leave a copy of the schedule on the clipboard.
+    try { navigator.clipboard.writeText('').catch(() => {}); } catch (e) {}
+    loadBytes(SHARED_NAME, bytes);
+  });
+
+  // Pasting also works on a computer: a copied PDF file, or base64 text from the Shortcut.
+  document.addEventListener('paste', (e) => {
+    const cd = e.clipboardData; if (!cd) return;
+    const file = Array.from(cd.files || []).find((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    if (file) { e.preventDefault(); load(file); return; }
+    const bytes = pdfFromBase64(cd.getData('text/plain'));
+    if (bytes) { e.preventDefault(); loadBytes(SHARED_NAME, bytes); }
+  });
+  window.addEventListener('hashchange', takeHash);
 
   function weekLabel(doc) {
     const dates = doc.days.map((d) => d.date).filter(Boolean).sort();
@@ -566,7 +677,7 @@ footer { color: var(--muted); font-size: 13px; }
       sel.appendChild(og);
     }
     $('pickerWrap').hidden = false;
-    const fromHash = decodeURIComponent((location.hash || '').slice(1)).toLowerCase();
+    const fromHash = state.hashName;
     const remembered = store.get('bqt.person');
     const match = (pred) => state.doc.people.find(pred);
     const pick = (fromHash && (match((p) => p.section === 'Banquets' && slug(p.name) === fromHash) || match((p) => slug(p.name) === fromHash)))
@@ -706,7 +817,10 @@ footer { color: var(--muted); font-size: 13px; }
     } catch (e) { fallback(); }
   });
 
+  if (inViewer) $('howto').hidden = true;
+  if (SHORTCUT_LINK) { $('shortcutLink').href = SHORTCUT_LINK; $('shortcutGet').hidden = false; }
   renderEmpty();
+  takeHash();
 })();
 </script>
 
