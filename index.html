@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+</head>
+<body>
+<title>BQT Shift Finder</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+/* Layout: one narrow column that reads like a printed call sheet — day rail on the left, shift slips on the right. */
+:root {
+  --bg: #f3f4f6;
+  --surface: #ffffff;
+  --ink: #1b2230;
+  --muted: #5d6676;
+  --line: #d9dde4;
+  --band: #1f4b99;          /* the schedule's blue divider band */
+  --cell: #fde9a6;          /* the schedule's yellow header cells */
+  --cell-ink: #3d3108;
+  --warn: #a24515;
+  --warn-bg: #fbeee6;
+  --focus: #1f4b99;
+  --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11141a; --surface: #191d25; --ink: #e7e9ee; --muted: #9aa2b1; --line: #2b313d;
+    --band: #7ea5ec; --cell: #4a3d12; --cell-ink: #f6e3a1; --warn: #f0a074; --warn-bg: #32211a; --focus: #7ea5ec;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11141a; --surface: #191d25; --ink: #e7e9ee; --muted: #9aa2b1; --line: #2b313d;
+  --band: #7ea5ec; --cell: #4a3d12; --cell-ink: #f6e3a1; --warn: #f0a074; --warn-bg: #32211a; --focus: #7ea5ec;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+.wrap { max-width: 720px; margin: 0 auto; display: grid; gap: 22px; }
+header { display: grid; gap: 4px; border-bottom: 4px solid var(--band); padding-bottom: 12px; }
+.eyebrow { font-family: var(--display); text-transform: uppercase; letter-spacing: .12em; font-size: 13px; color: var(--muted); font-weight: 600; }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(34px, 8vw, 48px); line-height: 1; margin: 0; letter-spacing: .01em; text-wrap: balance; }
+.lede { color: var(--muted); margin: 6px 0 0; max-width: 60ch; }
+
+.drop {
+  border: 2px dashed var(--line); border-radius: 10px; background: var(--surface);
+  padding: 22px; display: grid; gap: 10px; justify-items: start; transition: border-color .15s, background .15s;
+}
+.drop.over { border-color: var(--band); }
+.drop.loaded { border-style: solid; padding: 14px 16px; }
+.drop h2 { margin: 0; font-family: var(--display); font-size: 22px; font-weight: 600; }
+.drop p { margin: 0; color: var(--muted); font-size: 14px; }
+.btn {
+  font: 600 15px/1 var(--body); border-radius: 8px; padding: 11px 16px; cursor: pointer;
+  border: 1.5px solid var(--band); background: var(--band); color: var(--surface);
+}
+.btn.ghost { background: transparent; color: var(--band); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.filemeta { font-size: 14px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.filemeta strong { color: var(--ink); }
+
+.picker { display: grid; gap: 6px; }
+label { font-family: var(--display); text-transform: uppercase; letter-spacing: .1em; font-size: 13px; font-weight: 600; color: var(--muted); }
+select {
+  font: 600 18px var(--body); color: var(--ink); background: var(--surface); border: 1.5px solid var(--line);
+  border-radius: 8px; padding: 10px 12px; width: 100%; max-width: 420px;
+}
+
+.summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.summary .who { font-family: var(--display); font-size: 30px; font-weight: 700; line-height: 1; }
+.summary .what { color: var(--muted); }
+
+.week { display: grid; border-top: 1px solid var(--line); }
+.day { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.day .dname { font-family: var(--display); font-weight: 700; font-size: 24px; line-height: 1; text-transform: uppercase; letter-spacing: .03em; }
+.day .ddate { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.day.off .dname { color: var(--muted); font-weight: 600; }
+.offline { color: var(--muted); align-self: center; font-size: 15px; }
+.shifts { display: grid; gap: 10px; min-width: 0; }
+
+.slip {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; align-items: start;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+}
+.time { font-family: var(--display); font-weight: 700; font-size: 30px; line-height: 1; font-variant-numeric: tabular-nums; grid-row: span 3; min-width: 4.2ch; }
+.time small { display: block; font-family: var(--body); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.fn { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.code {
+  font-family: var(--display); font-weight: 700; font-size: 15px; line-height: 1; min-width: 28px; text-align: center;
+  padding: 5px 6px; background: var(--cell); color: var(--cell-ink); border-radius: 4px; letter-spacing: .04em;
+}
+.fname { font-weight: 700; }
+.loc { font-size: 17px; overflow-wrap: anywhere; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.uniform { background: var(--cell); color: var(--cell-ink); border-radius: 4px; padding: 1px 7px; font-weight: 600; }
+.checks { grid-column: 1 / -1; display: grid; gap: 4px; margin-top: 6px; }
+.check { background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 6px 10px; font-size: 14px; }
+.check b { font-family: var(--display); text-transform: uppercase; letter-spacing: .08em; margin-right: 6px; }
+.note { color: var(--muted); font-size: 14px; }
+.example-tag { font-family: var(--display); text-transform: uppercase; letter-spacing: .12em; font-size: 12px; font-weight: 700; color: var(--muted); }
+.example { opacity: .78; }
+
+.actions { display: grid; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.actions h2 { margin: 0; font-family: var(--display); font-size: 22px; font-weight: 600; }
+.actions p { margin: 0; color: var(--muted); font-size: 14px; max-width: 62ch; }
+.actions select { font-size: 15px; max-width: 280px; }
+.status { font-size: 14px; color: var(--muted); min-height: 1.2em; }
+.status.err { color: var(--warn); }
+textarea.copybox { width: 100%; min-height: 160px; font: 14px/1.4 ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--bg); color: var(--ink); }
+.errorbox { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 12px 14px; }
+footer { color: var(--muted); font-size: 13px; }
+@media (max-width: 420px) {
+  .day { grid-template-columns: 1fr; gap: 8px; }
+  .day .dhead { display: flex; gap: 8px; align-items: baseline; }
+  .time { font-size: 26px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Banquet service schedule</div>
+    <h1>Shift Finder</h1>
+    <p class="lede">Drop in the weekly schedule PDF, pick a name, and see each shift's in-time, function, and location. The file is read on your device and never uploaded.</p>
+  </header>
+
+  <section class="drop" id="drop" aria-label="Schedule PDF">
+    <h2 id="dropTitle">Weekly schedule PDF</h2>
+    <p id="dropHint">Drag the PDF here, or choose it from your files. Use the PDF exported from Excel, not a photo or scan.</p>
+    <div class="row">
+      <button class="btn" id="chooseBtn" type="button">Choose PDF</button>
+      <span class="filemeta" id="fileMeta"></span>
+    </div>
+    <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
+  </section>
+
+  <div id="errors" hidden></div>
+
+  <section class="picker" id="pickerWrap" hidden>
+    <label for="person">Name</label>
+    <select id="person"></select>
+  </section>
+
+  <section id="result" aria-live="polite"></section>
+
+  <section class="actions" id="actions" hidden>
+    <h2>Add to calendar</h2>
+    <p id="calHelp"></p>
+    <div class="row">
+      <label for="hours" style="text-transform:none;letter-spacing:0;font-family:var(--body);font-size:14px;">End time</label>
+      <select id="hours">
+        <option value="">4 h day shifts, 6 h evening shifts</option>
+        <option value="3">3 hours after in-time</option>
+        <option value="4">4 hours after in-time</option>
+        <option value="5">5 hours after in-time</option>
+        <option value="6">6 hours after in-time</option>
+        <option value="8">8 hours after in-time</option>
+      </select>
+    </div>
+    <div class="row">
+      <button class="btn" id="icsBtn" type="button">Add shifts to Calendar</button>
+      <button class="btn ghost" id="copyBtn" type="button">Copy schedule as text</button>
+    </div>
+    <div class="status" id="status" role="status"></div>
+    <textarea class="copybox" id="copyBox" hidden readonly aria-label="Schedule text"></textarea>
+  </section>
+
+  <footer>Locations come from the slanted column headers. Checks flag cells that don't match their column, typo-looking times, and a.m./p.m. that had to be assumed.</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script>
+// BQT schedule parser: turns pdf.js text content of an Excel-exported banquet
+// schedule into per-person shifts. Pure functions, no DOM.
+(function (root) {
+  const HEADER_ROWS = {
+    'Function': 'func',
+    'Special Uniform': 'uniform',
+    '# of Guests': 'guests',
+    'Scheduled In-Time': 'intime',
+    'Number of Servers': 'needed',
+    'Scheduled Servers': 'scheduled',
+    'Shortage/ Surplus': 'shortage',
+    '# of Bartenders Scheduled': 'bartenders',
+  };
+  const DAYS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+  const FUNCTION_NAMES = {
+    CB: 'Coffee break', AM: 'AM break', PM: 'PM break', B: 'Breakfast', L: 'Lunch',
+    R: 'Reception', D: 'Dinner', T: 'Tasting', BAR: 'Bar',
+  };
+  const MORNING = new Set(['B', 'CB', 'AM']);
+  const EVENING = new Set(['R', 'D', 'PM', 'BAR']);
+
+  const fs = (t) => Math.hypot(t[0], t[1]);
+  const isUpright = (t) => Math.abs(t[1]) < 0.01 && t[0] > 0;
+  const isSlanted = (t) => t[0] > 0.01 && t[1] < -0.01;
+  const isVertical = (t) => Math.abs(t[0]) < 0.01 && Math.abs(t[1]) > 0.01;
+  const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
+
+  function parseTime(raw, ctx) {
+    const s = String(raw).trim();
+    const m = s.match(/^(\d{1,4})(?:[:.](\d{2}))?\s*(am|pm|a|p|noon|n)?\s*(.*)$/i);
+    if (!m) return null;
+    let digits = m[1], h, min = 0, uncertain = false;
+    if (m[2]) { h = +digits; min = +m[2]; }
+    else if (digits.length <= 2) { h = +digits; }
+    else if (digits.length === 3) { h = +digits[0]; min = +digits.slice(1); }
+    else { h = +digits.slice(0, 2); min = +digits.slice(2); }
+    if (h > 12 && digits.length === 2) { // e.g. "63a" -> probably 6:30
+      h = +digits[0]; min = +digits[1] * 10; uncertain = true;
+    }
+    if (h < 1 || h > 12 || min > 59) uncertain = true;
+    h = Math.min(Math.max(h, 0), 23);
+    if (min > 59) min = 0;
+    let suffix = (m[3] || '').toLowerCase(), assumed = false, hour24;
+    if (suffix === 'n' || suffix === 'noon') { hour24 = 12; }
+    else if (suffix.startsWith('a')) { hour24 = h === 12 ? 0 : h; }
+    else if (suffix.startsWith('p')) { hour24 = h === 12 ? 12 : h + 12; }
+    else {
+      assumed = true;
+      let pm;
+      if (h === 12) pm = true;
+      else if (MORNING.has(ctx)) pm = false;
+      else if (EVENING.has(ctx)) pm = true;
+      else if (ctx === 'L' || ctx === 'T') pm = h < 7;
+      else pm = h < 5;
+      hour24 = pm ? (h === 12 ? 12 : h + 12) : h;
+    }
+    if (hour24 > 23) { hour24 = h; uncertain = true; }
+    return { raw: s, hour: hour24, minute: min, assumed, uncertain, extra: (m[4] || '').trim() };
+  }
+
+  function formatTime(t) {
+    if (!t) return '';
+    const h12 = ((t.hour + 11) % 12) + 1;
+    const ap = t.hour < 12 ? 'a' : 'p';
+    return `${h12}:${String(t.minute).padStart(2, '0')}${ap}`;
+  }
+
+  function parsePage(items, pageIndex) {
+    const warnings = [];
+    const all = items.filter((i) => i.str && i.str.trim());
+    const up = all.filter((i) => isUpright(i.transform));
+    const x = (i) => i.transform[4];
+    const y = (i) => i.transform[5];
+    const cx = (i) => i.transform[4] + i.width / 2;
+
+    // Date and weekday
+    const vert = all.find((i) => isVertical(i.transform) && /\d+\/\d+\/\d{4}/.test(i.str));
+    const dateStr = vert ? vert.str.match(/\d+\/\d+\/\d{4}/)[0] : null;
+    let iso = null;
+    if (dateStr) { const [mo, d, yr] = dateStr.split('/').map(Number); iso = `${yr}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+    const dayItem = up.find((i) => DAYS.includes(i.str.trim().toUpperCase()));
+    let weekday = dayItem ? dayItem.str.trim() : '';
+    if (!weekday && iso) weekday = DAYS[new Date(iso + 'T12:00:00').getDay()];
+
+    // Header rows
+    const fnLabel = up.find((i) => i.str.trim() === 'Function');
+    if (!fnLabel) return { error: `Page ${pageIndex + 1}: no "Function" row found, skipped.` };
+    const labelX = x(fnLabel);
+    const rowY = {};
+    for (const i of up) {
+      const key = HEADER_ROWS[i.str.trim()];
+      if (key && !(key in rowY)) rowY[key] = y(i);
+    }
+    const rowItems = (yy) => up.filter((i) => Math.abs(y(i) - yy) < 2.5 && x(i) > labelX + 60);
+    const fnItems = rowItems(rowY.func).sort((a, b) => x(a) - x(b));
+    if (!fnItems.length) return { error: `Page ${pageIndex + 1}: "Function" row is empty, skipped.` };
+
+    // Column grid: uniform pitch, origin at the first Function cell
+    const c0 = cx(fnItems[0]);
+    const headerXs = [];
+    for (const k of ['func', 'guests', 'intime', 'needed']) if (rowY[k] != null) headerXs.push(...rowItems(rowY[k]).map(cx));
+    let pitch = 35.2;
+    const ests = headerXs.map((v) => { const k = Math.round((v - c0) / pitch); return k >= 1 ? (v - c0) / k : null; }).filter((v) => v);
+    if (ests.length) pitch = median(ests);
+    const colOf = (xx) => Math.round((xx - c0) / pitch);
+
+    const cols = {};
+    const col = (k) => (cols[k] = cols[k] || { index: k, labels: [] });
+    for (const [key, yy] of Object.entries(rowY)) {
+      if (key === 'scheduled' || key === 'shortage') continue;
+      for (const i of rowItems(yy)) {
+        const c = col(colOf(cx(i)));
+        c[key] = c[key] ? c[key] + ' ' + i.str.trim() : i.str.trim();
+      }
+    }
+
+    // Slanted location labels: project the label's centre down its 45° slant to the header's bottom edge
+    const fnSize = fs(fnLabel.transform);
+    const yBottom = y(fnLabel) + fnSize * 0.95;
+    for (const i of all.filter((i) => isSlanted(i.transform))) {
+      const t = i.transform, size = fs(t);
+      const dx = t[0] / size, dy = t[1] / size, ux = t[2] / size, uy = t[3] / size;
+      const mx = t[4] + dx * i.width / 2 + ux * size * 0.35;
+      const my = t[5] + dy * i.width / 2 + uy * size * 0.35;
+      // moving along the slant (dx, dy) until y reaches yBottom
+      const steps = (my - yBottom) / -dy;
+      const xb = mx + dx * steps;
+      col(colOf(xb)).labels.push(i.str.trim());
+    }
+    for (const c of Object.values(cols)) c.location = c.labels.join(' / ');
+
+    // People rows
+    const headerBottom = Math.min(...Object.values(rowY));
+    const sectionMarks = up.filter((i) => /^(BAR|BACK AISLE)$/i.test(i.str.trim()) && x(i) < c0 - pitch)
+      .map((i) => ({ y: y(i), name: i.str.trim().toUpperCase() === 'BAR' ? 'Bar' : 'Back aisle' }))
+      .sort((a, b) => b.y - a.y);
+    const sectionAt = (yy) => { let s = 'Banquets'; for (const m of sectionMarks) if (yy < m.y) s = m.name; return s; };
+
+    const nameItems = up.filter((i) => Math.abs(x(i) - labelX) < 3 && y(i) < headerBottom - 3 && /[A-Za-z]/.test(i.str) && !HEADER_ROWS[i.str.trim()]);
+    const people = [];
+    for (const n of nameItems) {
+      const yy = y(n);
+      const row = up.filter((i) => i !== n && Math.abs(y(i) - yy) < 2.5);
+      const prefixItem = row.find((i) => x(i) < labelX && /^(FT|PT|OC|IH)$/.test(i.str.trim()));
+      const name = n.str.trim().replace(/\s+/g, ' ');
+      const section = sectionAt(yy);
+      const notes = [], cells = {};
+      for (const i of row) {
+        if (i === prefixItem || x(i) < x(n) + n.width - 1) continue;
+        const v = i.str.trim();
+        if (cx(i) < c0 - pitch / 2) { notes.push(v); continue; }
+        const k = colOf(cx(i));
+        (cells[k] = cells[k] || []).push(v);
+      }
+      people.push({ name, prefix: prefixItem ? prefixItem.str.trim() : '', section, notes, cells, y: yy });
+    }
+    return { pageIndex, date: iso, dateLabel: dateStr, weekday, cols, people, pitch, c0, warnings };
+  }
+
+  function shiftsFor(page, person) {
+    const out = [], extraNotes = [];
+    const keys = Object.keys(person.cells).map(Number).sort((a, b) => a - b);
+    for (const k of keys) {
+      const c = page.cols[k] || { index: k, labels: [], location: '' };
+      const values = person.cells[k].filter((v) => v !== 'X' && v !== '/' && v !== 'x');
+      if (!values.length) continue;
+      const fn = (c.func || '').toUpperCase();
+      const isBreakCol = fn === 'CB';
+      const warnings = [];
+      let code = null, time = null, kind = 'event';
+      for (const v of values) {
+        if (/^\d/.test(v)) {
+          const t = parseTime(v, code || fn);
+          if (t) { time = t; } else warnings.push(`Couldn't read the time "${v}".`);
+        } else {
+          code = code ? code + ' ' + v.toUpperCase() : v.toUpperCase();
+        }
+      }
+      if (time && !code && isBreakCol) kind = 'call';
+      if (!time && code && isBreakCol && !/^(AM|PM)$/.test(code)) { extraNotes.push(`Marked ${code}`); continue; }
+      if (!time) {
+        if (c.intime) time = parseTime(c.intime, code || fn);
+        if (!time) warnings.push('No in-time listed for this column.');
+      }
+      if (time && time.uncertain) warnings.push(`The time "${time.raw}" looks like a typo; read it as ${formatTime(time)}.`);
+      if (time && time.extra && /[^A-Za-z]/.test(time.extra)) warnings.push(`Unusual time entry "${time.raw}".`);
+      if (code && fn) {
+        const ok = code === fn || (fn === 'CB' && /^(AM|PM)$/.test(code)) || code.split(' ').includes(fn);
+        if (!ok) warnings.push(`Marked "${code}", but this column's function is "${fn}".`);
+      }
+      if (kind === 'event' && !c.location) warnings.push('No location label found for this column.');
+      const fnKey = kind === 'call' ? 'CALL' : (code && FUNCTION_NAMES[code.split(' ')[0]] ? code.split(' ')[0] : fn);
+      out.push({
+        column: k, kind, code: code || '', func: fn,
+        functionName: kind === 'call' ? 'Call time' : (FUNCTION_NAMES[fnKey] || FUNCTION_NAMES[fn] || fn || code || 'Shift'),
+        functionKey: fnKey,
+        location: kind === 'call' ? '' : c.location,
+        guests: c.guests || '', uniform: c.uniform || '',
+        columnTime: c.intime || '', time, warnings, cellText: person.cells[k].join(' '),
+      });
+    }
+    out.sort((a, b) => (a.time ? a.time.hour * 60 + a.time.minute : 9999) - (b.time ? b.time.hour * 60 + b.time.minute : 9999));
+    return { shifts: out, extraNotes };
+  }
+
+  function parseDocument(pages) {
+    const days = [], errors = [];
+    pages.forEach((items, i) => {
+      const p = parsePage(items, i);
+      if (p.error) errors.push(p.error); else days.push(p);
+    });
+    const people = new Map();
+    for (const d of days) for (const p of d.people) {
+      const key = `${p.section}|${p.name}`;
+      if (!people.has(key)) people.set(key, { key, name: p.name, section: p.section, prefix: p.prefix });
+      else if (p.prefix && !people.get(key).prefix) people.get(key).prefix = p.prefix;
+    }
+    return { days, errors, people: [...people.values()] };
+  }
+
+  function scheduleFor(doc, key) {
+    return doc.days.map((d) => {
+      const person = d.people.find((p) => `${p.section}|${p.name}` === key);
+      if (!person) return { day: d, listed: false, shifts: [], notes: [] };
+      const r = shiftsFor(d, person);
+      return { day: d, listed: true, shifts: r.shifts, notes: [...person.notes.filter((n) => !/^[X/x]$/.test(n)), ...r.extraNotes] };
+    });
+  }
+
+  // Schedules never list end times. Evening shifts (receptions, dinners, bar, or anything starting 2 p.m. or later) run 6 hours; earlier shifts run 4.
+  const EVENING_FUNCS = new Set(['R', 'D', 'BAR']);
+  function defaultHours(s) {
+    if (EVENING_FUNCS.has(s.functionKey) || EVENING_FUNCS.has(s.func)) return 6;
+    if (s.time && s.time.hour >= 14) return 6;
+    return 4;
+  }
+
+  function icsFor(personName, schedule, opts = {}) {
+    const fixed = opts.hours; // number or null (use defaults by function)
+    const pad = (n) => String(n).padStart(2, '0');
+    const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    const fold = (line) => {
+      const out = []; let cur = '';
+      for (const ch of line) {
+        if (new TextEncoder().encode(cur + ch).length > (out.length ? 74 : 75)) { out.push(cur); cur = ch; } else cur += ch;
+      }
+      out.push(cur); return out.join('\r\n ');
+    };
+    const now = new Date();
+    const stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+    const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//BQT Shift Finder//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+      'BEGIN:VTIMEZONE', 'TZID:America/Phoenix', 'BEGIN:STANDARD', 'DTSTART:19700101T000000', 'TZOFFSETFROM:-0700', 'TZOFFSETTO:-0700', 'TZNAME:MST', 'END:STANDARD', 'END:VTIMEZONE'];
+    let count = 0;
+    for (const entry of schedule) {
+      if (!entry.day.date) continue;
+      for (const s of entry.shifts) {
+        if (!s.time) continue;
+        const [yr, mo, dd] = entry.day.date.split('-').map(Number);
+        const start = new Date(Date.UTC(yr, mo - 1, dd, s.time.hour, s.time.minute));
+        const hrs = fixed || defaultHours(s);
+        const end = new Date(start.getTime() + hrs * 3600e3);
+        const f = (d) => `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00`;
+        const title = s.kind === 'call' ? 'Banquets: call time' : `${s.functionName}${s.location ? ' · ' + s.location : ''}`;
+        const desc = [
+          s.code ? `Marked: ${s.code}` : '',
+          s.func ? `Function: ${s.func}` : '',
+          s.guests ? `Guests: ${s.guests}` : '',
+          s.uniform ? `Special uniform: ${s.uniform}` : '',
+          `In-time: ${formatTime(s.time)}${s.time.assumed ? ' (a.m./p.m. assumed)' : ''}`,
+          `End time is an estimate (${hrs} h).`,
+          ...s.warnings.map((w) => 'Check: ' + w),
+        ].filter(Boolean).join('\n');
+        lines.push('BEGIN:VEVENT',
+          `UID:${entry.day.date}-${slug(personName)}-col${s.column}@bqt-shift-finder`,
+          `DTSTAMP:${stamp}`,
+          `DTSTART;TZID=America/Phoenix:${f(start)}`,
+          `DTEND;TZID=America/Phoenix:${f(end)}`,
+          `SUMMARY:${esc(title)}`,
+          s.location ? `LOCATION:${esc(s.location)}` : null,
+          `DESCRIPTION:${esc(desc)}`,
+          'END:VEVENT');
+        count++;
+      }
+    }
+    lines.push('END:VCALENDAR');
+    return { text: lines.filter((l) => l !== null).map(fold).join('\r\n') + '\r\n', count };
+  }
+
+  const api = { parseTime, formatTime, parsePage, parseDocument, scheduleFor, shiftsFor, icsFor, FUNCTION_NAMES, defaultHours };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BQT = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const inViewer = typeof window.claude !== 'undefined';
+  const state = { doc: null, fileName: '', key: null };
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const shortDate = (iso) => { if (!iso) return ''; const [y, m, d] = iso.split('-').map(Number); return `${MONTHS[m - 1]} ${d}`; };
+  const dayAbbr = (w) => (w || '').slice(0, 3);
+  const pretty = (w) => w ? w[0] + w.slice(1).toLowerCase() : '';
+
+  // ---------- file intake ----------
+  const drop = $('drop'), input = $('fileInput');
+  $('chooseBtn').addEventListener('click', () => input.click());
+  input.addEventListener('change', () => { if (input.files[0]) load(input.files[0]); input.value = ''; });
+  ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', (e) => { const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) load(f); });
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => { e.preventDefault(); const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) load(f); });
+
+  function showErrors(list) {
+    const box = $('errors');
+    box.replaceChildren();
+    if (!list.length) { box.hidden = true; return; }
+    box.className = 'errorbox';
+    list.forEach((m) => box.appendChild(el('div', null, m)));
+    box.hidden = false;
+  }
+
+  async function load(file) {
+    $('fileMeta').textContent = `Reading ${file.name}…`;
+    showErrors([]);
+    try {
+      if (!window.pdfjsLib) throw new Error('The PDF reader did not load. Check your connection and reload the page.');
+      const data = new Uint8Array(await file.arrayBuffer());
+      const pdf = await pdfjsLib.getDocument({ data, verbosity: 0, isEvalSupported: false }).promise;
+      const pages = [];
+      for (let i = 1; i <= pdf.numPages; i++) pages.push((await (await pdf.getPage(i)).getTextContent()).items);
+      const doc = BQT.parseDocument(pages);
+      if (!doc.days.length) {
+        const textless = pages.every((p) => !p.some((i) => i.str && i.str.trim()));
+        throw new Error(textless
+          ? 'This PDF has no text in it, so it was probably scanned or photographed. Use the PDF exported from Excel.'
+          : "This PDF doesn't look like a banquet service schedule: no page has a Function row.");
+      }
+      state.doc = doc; state.fileName = file.name;
+      drop.classList.add('loaded');
+      $('dropTitle').textContent = weekLabel(doc);
+      $('dropHint').hidden = true;
+      $('chooseBtn').textContent = 'Load a different PDF';
+      $('chooseBtn').classList.add('ghost');
+      const fm = $('fileMeta'); fm.replaceChildren();
+      fm.append(el('strong', null, file.name), document.createTextNode(` · ${doc.days.length} days · ${doc.people.length} names`));
+      showErrors(doc.errors);
+      fillPicker();
+    } catch (err) {
+      $('fileMeta').textContent = '';
+      showErrors([err.message || String(err)]);
+    }
+  }
+
+  function weekLabel(doc) {
+    const dates = doc.days.map((d) => d.date).filter(Boolean).sort();
+    if (!dates.length) return 'Schedule loaded';
+    const [y1] = dates[0].split('-');
+    return `Week of ${shortDate(dates[0])} – ${shortDate(dates[dates.length - 1])}, ${y1}`;
+  }
+
+  // ---------- picker ----------
+  function fillPicker() {
+    const sel = $('person'); sel.replaceChildren();
+    const groups = {};
+    for (const p of state.doc.people) (groups[p.section] = groups[p.section] || []).push(p);
+    const ph = el('option', null, 'Choose a name'); ph.value = ''; sel.appendChild(ph);
+    for (const sec of ['Banquets', 'Bar', 'Back aisle']) {
+      if (!groups[sec]) continue;
+      const og = document.createElement('optgroup'); og.label = sec;
+      groups[sec].slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((p) => {
+        const o = el('option', null, p.prefix ? `${p.name} (${p.prefix})` : p.name); o.value = p.key; og.appendChild(o);
+      });
+      sel.appendChild(og);
+    }
+    $('pickerWrap').hidden = false;
+    const fromHash = decodeURIComponent((location.hash || '').slice(1)).toLowerCase();
+    const remembered = store.get('bqt.person');
+    const match = (pred) => state.doc.people.find(pred);
+    const pick = (fromHash && (match((p) => p.section === 'Banquets' && slug(p.name) === fromHash) || match((p) => slug(p.name) === fromHash)))
+      || (remembered && match((p) => p.key === remembered))
+      || (remembered && match((p) => p.name === remembered.split('|')[1]));
+    if (pick) { sel.value = pick.key; choose(pick.key); }
+    else { state.key = null; renderExample(); $('actions').hidden = true; }
+  }
+  $('person').addEventListener('change', (e) => { if (e.target.value) { store.set('bqt.person', e.target.value); choose(e.target.value); } });
+  $('hours').addEventListener('change', (e) => store.set('bqt.hours', e.target.value));
+  const savedHours = store.get('bqt.hours'); if (savedHours != null) $('hours').value = savedHours;
+
+  function choose(key) {
+    state.key = key;
+    const person = state.doc.people.find((p) => p.key === key);
+    const sched = BQT.scheduleFor(state.doc, key);
+    renderSchedule(person, sched);
+    renderActions(person, sched);
+  }
+
+  // ---------- rendering ----------
+  function slip(s, example) {
+    const card = el('article', 'slip' + (example ? ' example' : ''));
+    const t = el('div', 'time', s.time ? BQT.formatTime(s.time) : '—');
+    if (s.kind === 'call') t.appendChild(el('small', null, 'Call'));
+    else if (s.time && s.time.assumed) t.appendChild(el('small', null, s.time.hour < 12 ? 'a.m. assumed' : 'p.m. assumed'));
+    card.appendChild(t);
+    const fn = el('div', 'fn');
+    if (s.kind !== 'call') fn.appendChild(el('span', 'code', s.code || s.func || '?'));
+    fn.appendChild(el('span', 'fname', s.kind === 'call' ? 'Call time' : s.functionName));
+    card.appendChild(fn);
+    card.appendChild(el('div', 'loc', s.kind === 'call' ? 'No event column; time listed beside your name' : (s.location || 'Location not labeled')));
+    const meta = el('div', 'meta');
+    if (s.guests) meta.appendChild(el('span', null, `${s.guests} guests`));
+    if (s.uniform) meta.appendChild(el('span', 'uniform', `Uniform: ${s.uniform}`));
+    if (s.cellText && !/^[A-Za-z]{1,3}$/.test(s.cellText)) meta.appendChild(el('span', null, `Cell: ${s.cellText}`));
+    if (meta.childNodes.length) card.appendChild(meta);
+    if (s.warnings && s.warnings.length) {
+      const c = el('div', 'checks');
+      s.warnings.forEach((w) => { const d = el('div', 'check'); d.append(el('b', null, 'Check'), document.createTextNode(w)); c.appendChild(d); });
+      card.appendChild(c);
+    }
+    return card;
+  }
+
+  function dayRow(weekday, iso, shifts, notes, listed) {
+    const row = el('div', 'day' + (shifts.length ? '' : ' off'));
+    const head = el('div', 'dhead');
+    head.append(el('div', 'dname', dayAbbr(weekday)), el('div', 'ddate', shortDate(iso)));
+    row.appendChild(head);
+    const body = el('div', 'shifts');
+    if (shifts.length) shifts.forEach((s) => body.appendChild(slip(s)));
+    else body.appendChild(el('div', 'offline', listed === false ? 'Not on this day’s sheet' : 'Not scheduled'));
+    if (notes && notes.length) body.appendChild(el('div', 'note', `Written beside name: ${notes.join(' ')}`));
+    row.appendChild(body);
+    return row;
+  }
+
+  function renderSchedule(person, sched) {
+    const root = $('result'); root.replaceChildren();
+    const count = sched.reduce((n, e) => n + e.shifts.length, 0);
+    const days = sched.filter((e) => e.shifts.length).length;
+    const checks = sched.reduce((n, e) => n + e.shifts.filter((s) => s.warnings.length).length, 0);
+    const sum = el('div', 'summary');
+    sum.append(el('span', 'who', person.name),
+      el('span', 'what', `${count} ${count === 1 ? 'shift' : 'shifts'} on ${days} ${days === 1 ? 'day' : 'days'}${checks ? ` · ${checks} to check` : ''}`));
+    root.appendChild(sum);
+    const week = el('div', 'week');
+    sched.forEach((e) => week.appendChild(dayRow(e.day.weekday, e.day.date, e.shifts, e.notes, e.listed)));
+    root.appendChild(week);
+  }
+
+  function renderExample() {
+    const root = $('result'); root.replaceChildren();
+    root.appendChild(el('div', 'example-tag', state.doc ? 'Choose a name to see their week' : 'Example of what you’ll see'));
+    const week = el('div', 'week');
+    const ex = { kind: 'event', code: 'R', func: 'R', functionName: 'Reception', location: 'Sample Co. - Terrace Lawn', guests: '125', uniform: '', time: { hour: 15, minute: 0 }, warnings: [] };
+    const ex2 = { kind: 'event', code: 'R', func: 'D', functionName: 'Reception', location: 'Sample Co. - Ballroom', guests: '200', uniform: 'Jeans', time: { hour: 17, minute: 30 }, warnings: ['Marked "R", but this column\'s function is "D".'] };
+    const r1 = dayRow('WEDNESDAY', null, [], [], true); r1.querySelector('.shifts').replaceChildren(slip(ex, true));
+    const r2 = dayRow('SUNDAY', null, [], [], true); r2.querySelector('.shifts').replaceChildren(slip(ex2, true));
+    week.append(r2, r1);
+    root.appendChild(week);
+  }
+
+  // ---------- calendar + text ----------
+  function renderActions(person, sched) {
+    const n = sched.reduce((k, e) => k + e.shifts.filter((s) => s.time).length, 0);
+    $('actions').hidden = n === 0 && !sched.some((e) => e.shifts.length);
+    const btn = $('icsBtn');
+    btn.textContent = `Add ${n} ${n === 1 ? 'shift' : 'shifts'} to Calendar`;
+    $('copyBox').hidden = true; setStatus('');
+    if (inViewer) {
+      btn.disabled = true;
+      $('calHelp').textContent = 'Calendar files can’t be saved from inside Claude. Open the hosted copy of this page in Safari to add shifts to iPhone Calendar. You can still copy the schedule as text and paste it into a message.';
+    } else {
+      btn.disabled = n === 0;
+      $('calHelp').textContent = 'Creates one calendar file with every shift this week. On iPhone, open it and tap Add All. Re-adding a revised schedule updates the same events instead of duplicating them.';
+    }
+  }
+
+  function setStatus(msg, err) { const s = $('status'); s.textContent = msg; s.classList.toggle('err', !!err); }
+
+  $('icsBtn').addEventListener('click', () => {
+    if (!state.key || inViewer) return;
+    const person = state.doc.people.find((p) => p.key === state.key);
+    const hrs = $('hours').value ? Number($('hours').value) : null;
+    const ics = BQT.icsFor(person.name, BQT.scheduleFor(state.doc, state.key), { hours: hrs });
+    const dates = state.doc.days.map((d) => d.date).filter(Boolean).sort();
+    const blob = new Blob([ics.text], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${slug(person.name)}-shifts-${dates[0] || 'week'}.ics`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    setStatus(`Calendar file with ${ics.count} ${ics.count === 1 ? 'shift' : 'shifts'} created. Open it to add them.`);
+  });
+
+  function asText(person, sched) {
+    const lines = [`${person.name} — ${weekLabel(state.doc)}`];
+    for (const e of sched) {
+      const d = `${pretty(dayAbbr(e.day.weekday))} ${shortDate(e.day.date)}`;
+      if (!e.shifts.length) { lines.push(`${d}: off`); continue; }
+      for (const s of e.shifts) {
+        const bits = [s.time ? BQT.formatTime(s.time) : '?', s.kind === 'call' ? 'Call time' : s.functionName];
+        if (s.location) bits.push(s.location);
+        if (s.guests) bits.push(`${s.guests} guests`);
+        if (s.uniform) bits.push(`Uniform: ${s.uniform}`);
+        let line = `${d}: ${bits.join(' · ')}`;
+        if (s.warnings.length) line += ` (check: ${s.warnings.join(' ')})`;
+        lines.push(line);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  $('copyBtn').addEventListener('click', () => {
+    if (!state.key) return;
+    const person = state.doc.people.find((p) => p.key === state.key);
+    const text = asText(person, BQT.scheduleFor(state.doc, state.key));
+    const box = $('copyBox');
+    const fallback = () => { box.value = text; box.hidden = false; box.focus(); box.select(); setStatus('Select the text below and copy it.'); };
+    try {
+      navigator.clipboard.writeText(text).then(() => { box.hidden = true; setStatus('Copied. Paste it into a message or note.'); }, fallback);
+    } catch (e) { fallback(); }
+  });
+
+  renderExample();
+})();
+</script>
+
+</body>
+</html>
