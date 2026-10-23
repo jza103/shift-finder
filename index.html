@@ -231,7 +231,7 @@ footer { color: var(--muted); font-size: 13px; }
     R: 'Reception', D: 'Dinner', T: 'Tasting', BAR: 'Bar',
   };
   const MORNING = new Set(['B', 'CB', 'AM']);
-  const EVENING = new Set(['R', 'D', 'PM', 'BAR']);
+  const EVENING = new Set(['R', 'D', 'BAR']);
 
   const fs = (t) => Math.hypot(t[0], t[1]);
   const isUpright = (t) => Math.abs(t[1]) < 0.01 && t[0] > 0;
@@ -264,6 +264,7 @@ footer { color: var(--muted); font-size: 13px; }
       if (h === 12) pm = true;
       else if (MORNING.has(ctx)) pm = false;
       else if (EVENING.has(ctx)) pm = true;
+      else if (ctx === 'PM') pm = h < 9; // PM breaks start as early as 11 a.m.
       else if (ctx === 'L' || ctx === 'T') pm = h < 7;
       else pm = h < 5;
       hour24 = pm ? (h === 12 ? 12 : h + 12) : h;
@@ -380,20 +381,22 @@ footer { color: var(--muted); font-size: 13px; }
       if (!values.length) continue;
       const fn = (c.func || '').toUpperCase();
       const isBreakCol = fn === 'CB';
+      // The CB columns are labeled "AM Breaks" / "PM Break"; the label, not the clock, decides which break it is.
+      const breakType = isBreakCol ? ((c.location.match(/^\s*(AM|PM)\b/i) || [])[1] || '').toUpperCase() || null : null;
       const warnings = [];
       let code = null, time = null, kind = 'event';
       for (const v of values) {
         if (/^\d/.test(v)) {
-          const t = parseTime(v, code || fn);
+          const t = parseTime(v, code || breakType || fn);
           if (t) { time = t; } else warnings.push(`Couldn't read the time "${v}".`);
         } else {
           code = code ? code + ' ' + v.toUpperCase() : v.toUpperCase();
         }
       }
-      if (time && !code && isBreakCol) kind = 'call';
+      if (time && !code && isBreakCol) kind = breakType ? 'break' : 'call';
       if (!time && code && isBreakCol && !/^(AM|PM)$/.test(code)) { extraNotes.push(`Marked ${code}`); continue; }
       if (!time) {
-        if (c.intime) time = parseTime(c.intime, code || fn);
+        if (c.intime) time = parseTime(c.intime, code || breakType || fn);
         if (!time) warnings.push('No in-time listed for this column.');
       }
       if (time && time.uncertain) warnings.push(`The time "${time.raw}" looks like a typo; read it as ${formatTime(time)}.`);
@@ -401,14 +404,15 @@ footer { color: var(--muted); font-size: 13px; }
       if (code && fn) {
         const ok = code === fn || (fn === 'CB' && /^(AM|PM)$/.test(code)) || code.split(' ').includes(fn);
         if (!ok) warnings.push(`Marked "${code}", but this column's function is "${fn}".`);
+        else if (breakType && /^(AM|PM)$/.test(code) && code !== breakType) warnings.push(`Marked "${code}", but this is the ${c.location} column.`);
       }
-      if (kind === 'event' && !c.location) warnings.push('No location label found for this column.');
-      const fnKey = kind === 'call' ? 'CALL' : (code && FUNCTION_NAMES[code.split(' ')[0]] ? code.split(' ')[0] : fn);
+      if (kind === 'event' && !breakType && !c.location) warnings.push('No location label found for this column.');
+      const fnKey = kind === 'call' ? 'CALL' : kind === 'break' ? breakType : (code && FUNCTION_NAMES[code.split(' ')[0]] ? code.split(' ')[0] : fn);
       out.push({
         column: k, kind, code: code || '', func: fn,
         functionName: kind === 'call' ? 'Call time' : (FUNCTION_NAMES[fnKey] || FUNCTION_NAMES[fn] || fn || code || 'Shift'),
         functionKey: fnKey,
-        location: kind === 'call' ? '' : c.location,
+        location: kind === 'call' || breakType ? '' : c.location,
         guests: c.guests || '', uniform: c.uniform || '',
         columnTime: c.intime || '', time, warnings, cellText: person.cells[k].join(' '),
       });
@@ -716,7 +720,7 @@ footer { color: var(--muted); font-size: 13px; }
     if (s.kind !== 'call') fn.appendChild(el('span', 'code', s.code || s.func || '?'));
     fn.appendChild(el('span', 'fname', s.kind === 'call' ? 'Call time' : s.functionName));
     card.appendChild(fn);
-    card.appendChild(el('div', 'loc', s.kind === 'call' ? 'No event column; time listed beside your name' : (s.location || 'Location not labeled')));
+    card.appendChild(el('div', 'loc', s.kind === 'call' ? 'No event column; time listed beside your name' : s.kind === 'break' ? 'Break column; time listed in your row' : (s.location || 'Location not labeled')));
     const meta = el('div', 'meta');
     if (s.guests) meta.appendChild(el('span', null, `${s.guests} guests`));
     if (s.uniform) meta.appendChild(el('span', 'uniform', `Uniform: ${s.uniform}`));
