@@ -127,7 +127,9 @@ select {
 .cands { margin: 0; padding-left: 2.1em; display: grid; gap: 6px; font-size: 15px; }
 .cands li::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
 .cands .also { display: block; color: var(--muted); font-size: 13px; }
-.pref { background: var(--cell); color: var(--cell-ink); border-radius: 4px; padding: 0 6px; font-size: 13px; font-weight: 600; margin-left: 6px; white-space: nowrap; }
+.details h4 { margin: 8px 0 2px; font-size: 13px; font-weight: 700; color: var(--ink); }
+.anomaly { display: block; color: var(--warn); background: var(--warn-bg); border-radius: 4px; padding: 2px 6px; margin: 2px 0 4px; font-size: 13px; }
+.pref { border: 1px solid var(--line); color: var(--muted); border-radius: 4px; padding: 0 6px; font-size: 13px; font-weight: 600; margin-left: 6px; white-space: nowrap; }
 .note { color: var(--muted); font-size: 14px; }
 .example-tag { font-family: var(--display); text-transform: uppercase; letter-spacing: .12em; font-size: 12px; font-weight: 700; color: var(--muted); }
 
@@ -364,12 +366,13 @@ footer { color: var(--muted); font-size: 13px; }
 
     // People rows
     const headerBottom = Math.min(...Object.values(rowY));
-    const sectionMarks = up.filter((i) => /^(BAR|BACK AISLE)$/i.test(i.str.trim()) && x(i) < c0 - pitch)
-      .map((i) => ({ y: y(i), name: i.str.trim().toUpperCase() === 'BAR' ? 'Bar' : 'Back aisle' }))
+    const nameItems = up.filter((i) => Math.abs(x(i) - labelX) < 3 && y(i) < headerBottom - 3 && /[A-Za-z]/.test(i.str) && !HEADER_ROWS[i.str.trim()]);
+    // Section markers ("BAR", "BACK AISLE", or any other) are all-caps labels on a row of their own, left of the grid.
+    const sectionMarks = up.filter((i) => /^[A-Z][A-Z &/'-]{2,}$/.test(i.str.trim()) && x(i) < c0 - pitch && y(i) < headerBottom - 3
+      && !nameItems.some((n) => Math.abs(y(n) - y(i)) < 2.5))
+      .map((i) => { const t = i.str.trim().replace(/\s+/g, ' '); return { y: y(i), name: t[0] + t.slice(1).toLowerCase() }; })
       .sort((a, b) => b.y - a.y);
     const sectionAt = (yy) => { let s = 'Banquets'; for (const m of sectionMarks) if (yy < m.y) s = m.name; return s; };
-
-    const nameItems = up.filter((i) => Math.abs(x(i) - labelX) < 3 && y(i) < headerBottom - 3 && /[A-Za-z]/.test(i.str) && !HEADER_ROWS[i.str.trim()]);
     const people = [];
     for (const n of nameItems) {
       const yy = y(n);
@@ -440,7 +443,7 @@ footer { color: var(--muted); font-size: 13px; }
         if (t.assumed) warnings.push(`The in-time "${t.raw}" has no a.m./p.m.; read it as ${formatTime(t)}.`);
         out.push({
           column: k, kind: 'call', code: '', func: fn, functionName: 'In-time', functionKey: 'CALL', location: '',
-          guests: '', uniform: '', columnTime: '', time: t, warnings, cellText: person.cells[k].join(' '), managers: [],
+          guests: '', uniform: '', columnTime: '', time: t, warnings, cellText: person.cells[k].join(' '), managers: [], crew: [],
         });
         continue;
       }
@@ -473,7 +476,19 @@ footer { color: var(--muted); font-size: 13px; }
         }
       }
       if (kind === 'event' && !breakType && !c.location) warnings.push('No location label found for this column.');
+      // A personal time hours away from the event's own in-time (like 530a on a 5:30p reception) is a schedule typo.
+      const colTime = kind === 'event' && time && values.some((v) => /^\d/.test(v)) && c.intime ? parseTime(c.intime, fn) : null;
+      if (colTime) {
+        const mins = (t) => t.hour * 60 + t.minute;
+        const gap = Math.abs(mins(time) - mins(colTime));
+        if (gap > 4 * 60) {
+          const flipped = { hour: (time.hour + 12) % 24, minute: time.minute };
+          const hint = Math.abs(mins(flipped) - mins(colTime)) <= 2 * 60 ? `probably meant ${formatTime(flipped)}` : 'probably a schedule typo';
+          warnings.push(`The cell says "${time.raw}", ${Math.round(gap / 60)} hours from this event's ${formatTime(colTime)} in-time; ${hint}.`);
+        }
+      }
       const fnKey = kind === 'call' ? 'CALL' : kind === 'break' ? breakType : (code && FUNCTION_NAMES[code.split(' ')[0]] ? code.split(' ')[0] : fn);
+      const crew = crewOf(page, k, person);
       out.push({
         column: k, kind, code: code || '', func: fn,
         functionName: kind === 'call' ? 'Call time' : (FUNCTION_NAMES[fnKey] || FUNCTION_NAMES[fn] || fn || code || 'Shift'),
@@ -481,7 +496,8 @@ footer { color: var(--muted); font-size: 13px; }
         location: kind === 'call' || breakType ? '' : c.location,
         guests: c.guests || '', uniform: c.uniform || '',
         columnTime: c.intime || '', time, warnings, cellText: person.cells[k].join(' '),
-        managers: crewOf(page, k, person).filter((m) => m.manager).map((m) => m.name),
+        managers: crew.filter((m) => m.manager).map((m) => m.name),
+        crew: crew.filter((m) => !m.manager),
       });
     }
     out.sort((a, b) => (a.time ? a.time.hour * 60 + a.time.minute : 9999) - (b.time ? b.time.hour * 60 + b.time.minute : 9999));
@@ -499,13 +515,40 @@ footer { color: var(--muted); font-size: 13px; }
     for (const p of page.people) {
       if (p === person || (isBreakCol && !p.prefix)) continue;
       const values = (p.cells[column] || []).filter((v) => !markOnly(v));
-      if (values.length) out.push({ key: keyOf(p), name: p.name, prefix: p.prefix, section: p.section, manager: !!p.manager, cell: values.join(' ') });
+      if (!values.length) continue;
+      const cell = values.join(' ');
+      out.push({ key: keyOf(p), name: p.name, prefix: p.prefix, section: p.section, manager: !!p.manager, cell, role: barRole(p, cell) });
     }
     return out;
   }
 
+  // Bartenders and barbacks: anyone in the Bar section, or a time ending in B (bar) or BB (barback), like 430PB or 330PBB.
+  function barRole(p, cell) {
+    const m = cell.match(/^\d[\d:.]*\s*(?:am|pm|a|p|noon|n)?\s*(BB|B)$/i);
+    if (m) return m[1].toUpperCase() === 'BB' ? 'barback' : 'bar';
+    if (/^BB$/i.test(cell)) return 'barback';
+    return p.section === 'Bar' ? 'bar' : '';
+  }
+
+  // Crew for a card, with each person's own checks attached so odd cells (like 530a on an evening event) get a note.
   function crewFor(page, column, key) {
-    return crewOf(page, column, page.people.find((p) => keyOf(p) === key));
+    const person = page.people.find((p) => keyOf(p) === key);
+    return crewOf(page, column, person).map((c) => {
+      const p = page.people.find((q) => keyOf(q) === c.key);
+      const s = shiftsFor(page, p).shifts.find((x) => x.column === column);
+      return { ...c, notes: s ? s.warnings : [] };
+    });
+  }
+
+  // Splits a crew into Banquets, Bars (bartenders and barbacks from any section), then any other section, such as Back aisle.
+  function crewGroups(crew) {
+    const groups = new Map([['Banquets', []], ['Bars', []]]);
+    for (const c of crew) {
+      const label = c.role ? 'Bars' : c.section;
+      if (!groups.has(label)) groups.set(label, []);
+      groups.get(label).push(c);
+    }
+    return [...groups].filter(([, people]) => people.length).map(([label, people]) => ({ label, people }));
   }
 
   // ---------- giving a shift away ----------
@@ -532,8 +575,9 @@ footer { color: var(--muted); font-size: 13px; }
     return a0 < b1 && b0 < a1;
   }
 
-  // People who could take `shift` off `key`'s hands that day, in PDF (seniority) order: same section, not a
-  // manager, not already on that shift, no clashing shift, and not marked X in the matching availability column.
+  // People who could take `shift` off `key`'s hands that day: same section, not a manager, not already on that
+  // shift, no clashing shift, and not marked X in the matching availability column. Listed in PDF (seniority)
+  // order, except that anyone with a / (would rather have it off) goes to the bottom, still in seniority order.
   function giveAwayFor(page, shift, key) {
     const person = page.people.find((p) => keyOf(p) === key);
     const slot = availSlot(shift);
@@ -546,10 +590,11 @@ footer { color: var(--muted); font-size: 13px; }
       const mark = p.avail && slot != null ? p.avail[slot] : '';
       if (/\bX\b/i.test(mark)) continue;
       candidates.push({
-        key: keyOf(p), name: p.name, prefix: p.prefix, prefers: mark === '/', availNote: mark && mark !== '/' ? mark : '',
+        key: keyOf(p), name: p.name, prefix: p.prefix, prefersOff: mark === '/', availNote: mark && mark !== '/' ? mark : '',
         shifts: theirs,
       });
     }
+    candidates.sort((a, b) => a.prefersOff - b.prefersOff); // stable, so seniority order holds within each group
     return { slot, slotName: slot == null ? '' : AVAIL_SLOTS[slot], availKnown: !!page.availKnown && slot != null, evening: isEvening(shift), candidates };
   }
 
@@ -620,6 +665,8 @@ footer { color: var(--muted); font-size: 13px; }
           s.uniform ? `Special uniform: ${s.uniform}` : '',
           `In-time: ${formatTime(s.time)}${s.time.assumed ? ' (a.m./p.m. assumed)' : ''}`,
           `End time is an estimate (${hrs} h).`,
+          ...(s.crew && s.crew.length ? ['Also on this shift:', ...crewGroups(s.crew).map((g) =>
+            `${g.label}: ${g.people.map((c) => c.name + (c.role === 'barback' ? ' (barback)' : c.role ? ' (bar)' : '')).join(', ')}`)] : []),
           ...s.warnings.map((w) => 'Check: ' + w),
         ].filter(Boolean).join('\n');
         lines.push('BEGIN:VEVENT',
@@ -638,7 +685,7 @@ footer { color: var(--muted); font-size: 13px; }
     return { text: lines.filter((l) => l !== null).map(fold).join('\r\n') + '\r\n', count };
   }
 
-  const api = { parseTime, formatTime, parsePage, parseDocument, scheduleFor, shiftsFor, crewFor, giveAwayFor, icsFor, FUNCTION_NAMES, AVAIL_SLOTS, defaultHours };
+  const api = { parseTime, formatTime, parsePage, parseDocument, scheduleFor, shiftsFor, crewFor, crewGroups, giveAwayFor, icsFor, FUNCTION_NAMES, AVAIL_SLOTS, defaultHours };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BQT = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -812,8 +859,7 @@ footer { color: var(--muted); font-size: 13px; }
     const groups = {};
     for (const p of state.doc.people) (groups[p.section] = groups[p.section] || []).push(p);
     const ph = el('option', null, 'Choose a name'); ph.value = ''; sel.appendChild(ph);
-    for (const sec of ['Banquets', 'Bar', 'Back aisle']) {
-      if (!groups[sec]) continue;
+    for (const sec of Object.keys(groups)) {
       const og = document.createElement('optgroup'); og.label = sec;
       groups[sec].slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((p) => {
         const o = el('option', null, p.prefix ? `${p.name} (${p.prefix})` : p.manager ? `${p.name} (Manager)` : p.name); o.value = p.key; og.appendChild(o);
@@ -903,17 +949,20 @@ footer { color: var(--muted); font-size: 13px; }
     const crew = BQT.crewFor(day, s.column, person.key).filter((c) => !c.manager);
     const sec = el('section');
     sec.appendChild(el('h3', null, crew.length ? `Also on this shift · ${crew.length}` : 'Also on this shift'));
-    if (crew.length) {
+    if (!crew.length) sec.appendChild(el('div', 'note', 'No one else is listed in this column.'));
+    for (const g of BQT.crewGroups(crew)) {
+      sec.appendChild(el('h4', null, `${g.label} · ${g.people.length}`));
       const ul = el('ul', 'crew');
-      for (const c of crew) {
+      for (const c of g.people) {
         const li = el('li'); personLine(li, c);
-        if (c.section !== person.section) li.appendChild(el('span', 'tag', c.section));
+        if (c.role === 'barback') li.appendChild(el('span', 'tag', 'Barback'));
         // Show the cell when it says more than the column's letter, such as a personal in-time.
         if (c.cell.toUpperCase() !== (s.func || '').toUpperCase()) li.appendChild(el('span', 'tag', c.cell));
+        c.notes.forEach((n) => li.appendChild(el('span', 'anomaly', n)));
         ul.appendChild(li);
       }
       sec.appendChild(ul);
-    } else sec.appendChild(el('div', 'note', 'No one else is listed in this column.'));
+    }
     box.appendChild(sec);
     if (person.manager) return box;
 
@@ -933,14 +982,14 @@ footer { color: var(--muted); font-size: 13px; }
     const g = BQT.giveAwayFor(day, s, person.key);
     list.appendChild(el('h3', null, `Who could take it · ${g.candidates.length}`));
     const rules = ['Listed in seniority order, as on the schedule.', `Not already on this shift, and no other ${g.evening ? 'evening' : 'overlapping daytime'} shift that day.`];
-    if (g.availKnown) rules.push(`Not marked X for ${g.slotName}.`);
+    if (g.availKnown) rules.push(`Not marked X for ${g.slotName}. Anyone who marked / (would rather have ${g.slotName} off) is listed last.`);
     else rules.push('Couldn’t read the availability columns for this shift, so X marks weren’t checked.');
     list.appendChild(el('p', 'note', rules.join(' ')));
     if (!g.candidates.length) { list.appendChild(el('div', 'note', 'No one fits.')); return; }
     const ol = el('ol', 'cands');
     for (const c of g.candidates) {
       const li = el('li'); personLine(li, c);
-      if (c.prefers) li.appendChild(el('span', 'pref', `Wants ${g.slotName}`));
+      if (c.prefersOff) li.appendChild(el('span', 'pref', `Prefers ${g.slotName} off`));
       const also = [];
       if (c.availNote) also.push(`Wrote “${c.availNote}” for ${g.slotName}`);
       const short = (x) => x.kind === 'break' ? `${x.functionKey} coffee` : x.kind === 'call' ? 'in' : (x.code || x.func || x.functionName);
