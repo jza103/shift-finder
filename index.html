@@ -110,6 +110,24 @@ select {
 .checks { grid-column: 1 / -1; display: grid; gap: 4px; margin-top: 6px; }
 .check { background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 6px 10px; font-size: 14px; }
 .check b { font-family: var(--display); text-transform: uppercase; letter-spacing: .08em; margin-right: 6px; }
+.slip.open { border-color: var(--band); }
+.slip[data-tap] { cursor: pointer; }
+.more {
+  grid-column: 1 / -1; justify-self: start; margin-top: 4px; padding: 6px 0 0; border: 0; background: none; cursor: pointer;
+  font: 600 14px var(--body); color: var(--band);
+}
+.more::after { content: " ▾"; }
+.slip.open .more::after { content: " ▴"; }
+.more:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.details { grid-column: 1 / -1; display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px; margin-top: 4px; cursor: auto; }
+.details h3 { margin: 0 0 4px; font-family: var(--display); text-transform: uppercase; letter-spacing: .1em; font-size: 14px; font-weight: 700; color: var(--muted); }
+.crew { list-style: none; margin: 0; padding: 0; columns: 2 170px; column-gap: 18px; font-size: 15px; }
+.crew li { break-inside: avoid; padding: 1px 0; }
+.tag { font-size: 12px; font-weight: 600; letter-spacing: .06em; color: var(--muted); margin-left: 4px; }
+.cands { margin: 0; padding-left: 2.1em; display: grid; gap: 6px; font-size: 15px; }
+.cands li::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cands .also { display: block; color: var(--muted); font-size: 13px; }
+.pref { background: var(--cell); color: var(--cell-ink); border-radius: 4px; padding: 0 6px; font-size: 13px; font-weight: 600; margin-left: 6px; white-space: nowrap; }
 .note { color: var(--muted); font-size: 14px; }
 .example-tag { font-family: var(--display); text-transform: uppercase; letter-spacing: .12em; font-size: 12px; font-weight: 700; color: var(--muted); }
 
@@ -206,7 +224,7 @@ footer { color: var(--muted); font-size: 13px; }
     </div>
   </details>
 
-  <footer>Locations come from the slanted column headers. Checks flag cells that don't match their column, typo-looking times, and a.m./p.m. that had to be assumed.</footer>
+  <footer>Tap a shift to see who else is on it and who could take it if you give it away. Locations come from the slanted column headers. Checks flag cells that don't match their column, typo-looking times, and a.m./p.m. that had to be assumed.</footer>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -359,17 +377,45 @@ footer { color: var(--muted); font-size: 13px; }
       const prefixItem = row.find((i) => x(i) < labelX && /^(FT|PT|OC|IH)$/.test(i.str.trim()));
       const name = n.str.trim().replace(/\s+/g, ' ');
       const section = sectionAt(yy);
-      const notes = [], cells = {};
+      const notes = [], marks = [], cells = {};
       for (const i of row) {
         if (i === prefixItem || x(i) < x(n) + n.width - 1) continue;
         const v = i.str.trim();
-        if (cx(i) < c0 - pitch / 2) { notes.push(v); continue; }
+        if (cx(i) < c0 - pitch / 2) { notes.push(v); marks.push({ x: x(i), v }); continue; }
         const k = colOf(cx(i));
         (cells[k] = cells[k] || []).push(v);
       }
-      people.push({ name, prefix: prefixItem ? prefixItem.str.trim() : '', section, notes, cells, y: yy });
+      const prefix = prefixItem ? prefixItem.str.trim() : '';
+      // The rows at the top of the Banquets section with no FT/PT/OC/IH prefix are the managers.
+      people.push({ name, prefix, section, manager: section === 'Banquets' && !prefix, notes, marks, cells, y: yy });
     }
-    return { pageIndex, date: iso, dateLabel: dateStr, weekday, cols, people, pitch, c0, warnings };
+    people.sort((a, b) => b.y - a.y); // PDF order, which is seniority order
+
+    // Availability: three unlabeled columns between the names and the AM Breaks column, for AM, Lunch and PM.
+    // X = unavailable, / = would like it. Their offset differs from page to page, so find them from where the marks sit.
+    const slotXs = availabilitySlots(people.flatMap((p) => p.marks.filter((m) => /^[X/]$/i.test(m.v)).map((m) => m.x)));
+    for (const p of people) {
+      p.avail = slotXs ? ['', '', ''] : null;
+      if (slotXs) for (const m of p.marks) {
+        const s = slotXs.findIndex((sx) => Math.abs(m.x - sx) < 5);
+        if (s >= 0) p.avail[s] = (p.avail[s] ? p.avail[s] + ' ' : '') + (m.v === 'x' ? 'X' : m.v);
+      }
+      delete p.marks;
+    }
+    return { pageIndex, date: iso, dateLabel: dateStr, weekday, cols, people, pitch, c0, availKnown: !!slotXs, warnings };
+  }
+
+  // Groups the left edges of X and / marks into the three availability columns. Returns null unless exactly
+  // three clear columns show up, so a page we can't read gives "unknown" rather than a wrong reading.
+  function availabilitySlots(xs) {
+    const groups = [];
+    for (const v of [...xs].sort((a, b) => a - b)) {
+      const g = groups[groups.length - 1];
+      if (g && v - g.last < 3) { g.sum += v; g.n++; g.last = v; } else groups.push({ sum: v, n: 1, last: v });
+    }
+    const real = groups.filter((g) => g.n >= 2).sort((a, b) => b.n - a.n).slice(0, 3).map((g) => g.sum / g.n).sort((a, b) => a - b);
+    if (real.length !== 3 || real[1] - real[0] < 6 || real[2] - real[1] < 6) return null;
+    return real;
   }
 
   function shiftsFor(page, person) {
@@ -385,6 +431,19 @@ footer { color: var(--muted); font-size: 13px; }
       // The label, not the clock, decides which one it is.
       const breakType = isBreakCol ? ((c.location.match(/^\s*(AM|PM)\b/i) || [])[1] || '').toUpperCase() || null : null;
       const warnings = [];
+      // Managers and back-aisle staff (rows with no FT/PT/OC/IH prefix) don't work coffee breaks: the AM Breaks
+      // column holds their in-time for the day, and the PM Break column doesn't apply to them.
+      if (isBreakCol && !person.prefix) {
+        const t = breakType !== 'PM' && values.length === 1 && /^\d/.test(values[0]) ? parseTime(values[0], '') : null;
+        if (!t) { extraNotes.push(`${c.location || 'Break'} column: ${values.join(' ')}`); continue; }
+        if (t.uncertain) warnings.push(`The time "${t.raw}" looks like a typo; read it as ${formatTime(t)}.`);
+        if (t.assumed) warnings.push(`The in-time "${t.raw}" has no a.m./p.m.; read it as ${formatTime(t)}.`);
+        out.push({
+          column: k, kind: 'call', code: '', func: fn, functionName: 'In-time', functionKey: 'CALL', location: '',
+          guests: '', uniform: '', columnTime: '', time: t, warnings, cellText: person.cells[k].join(' '), managers: [],
+        });
+        continue;
+      }
       let code = null, time = null, kind = 'event';
       for (const v of values) {
         if (/^\d/.test(v)) {
@@ -422,10 +481,76 @@ footer { color: var(--muted); font-size: 13px; }
         location: kind === 'call' || breakType ? '' : c.location,
         guests: c.guests || '', uniform: c.uniform || '',
         columnTime: c.intime || '', time, warnings, cellText: person.cells[k].join(' '),
+        managers: crewOf(page, k, person).filter((m) => m.manager).map((m) => m.name),
       });
     }
     out.sort((a, b) => (a.time ? a.time.hour * 60 + a.time.minute : 9999) - (b.time ? b.time.hour * 60 + b.time.minute : 9999));
     return { shifts: out, extraNotes };
+  }
+
+  const markOnly = (v) => /^[X/]$/i.test(v);
+  const keyOf = (p) => `${p.section}|${p.name}`;
+
+  // Everyone else with something written in this column, in PDF (seniority) order. In a coffee break column,
+  // rows without a prefix are skipped: for them the AM Breaks column is an in-time, not a coffee break.
+  function crewOf(page, column, person) {
+    const isBreakCol = ((page.cols[column] || {}).func || '').toUpperCase() === 'CB';
+    const out = [];
+    for (const p of page.people) {
+      if (p === person || (isBreakCol && !p.prefix)) continue;
+      const values = (p.cells[column] || []).filter((v) => !markOnly(v));
+      if (values.length) out.push({ key: keyOf(p), name: p.name, prefix: p.prefix, section: p.section, manager: !!p.manager, cell: values.join(' ') });
+    }
+    return out;
+  }
+
+  function crewFor(page, column, key) {
+    return crewOf(page, column, page.people.find((p) => keyOf(p) === key));
+  }
+
+  // ---------- giving a shift away ----------
+  const AVAIL_SLOTS = ['AM', 'Lunch', 'PM'];
+  // Which availability column applies to a shift: by function first, by start time when the function doesn't say.
+  function availSlot(s) {
+    const k = s.functionKey;
+    if (k === 'B' || k === 'AM') return 0;
+    if (k === 'L' || k === 'PM') return 1;
+    if (EVENING_FUNCS.has(k) || EVENING_FUNCS.has(s.func)) return 2;
+    if (!s.time) return null;
+    const m = s.time.hour * 60 + s.time.minute;
+    return m < 10 * 60 ? 0 : m < 14 * 60 ? 1 : 2;
+  }
+  const isEvening = (s) => defaultHours(s) === 6;
+  const span = (s) => { const t = s.time.hour * 60 + s.time.minute; return [t, t + defaultHours(s) * 60]; };
+  // Rule from Jason: a person can hold one evening shift a day, and a daytime shift never blocks an evening one
+  // (a lunch can be followed by a dinner even if the 4-hour estimate overlaps it). Two daytime shifts clash
+  // only if their estimated times overlap.
+  function clashes(theirs, given) {
+    if (isEvening(given)) return isEvening(theirs);
+    if (isEvening(theirs) || !theirs.time || !given.time) return false;
+    const [a0, a1] = span(theirs), [b0, b1] = span(given);
+    return a0 < b1 && b0 < a1;
+  }
+
+  // People who could take `shift` off `key`'s hands that day, in PDF (seniority) order: same section, not a
+  // manager, not already on that shift, no clashing shift, and not marked X in the matching availability column.
+  function giveAwayFor(page, shift, key) {
+    const person = page.people.find((p) => keyOf(p) === key);
+    const slot = availSlot(shift);
+    const candidates = [];
+    if (person) for (const p of page.people) {
+      if (p === person || p.section !== person.section || p.manager) continue;
+      if ((p.cells[shift.column] || []).some((v) => !markOnly(v))) continue;
+      const theirs = shiftsFor(page, p).shifts;
+      if (theirs.some((s) => clashes(s, shift))) continue;
+      const mark = p.avail && slot != null ? p.avail[slot] : '';
+      if (/\bX\b/i.test(mark)) continue;
+      candidates.push({
+        key: keyOf(p), name: p.name, prefix: p.prefix, prefers: mark === '/', availNote: mark && mark !== '/' ? mark : '',
+        shifts: theirs,
+      });
+    }
+    return { slot, slotName: slot == null ? '' : AVAIL_SLOTS[slot], availKnown: !!page.availKnown && slot != null, evening: isEvening(shift), candidates };
   }
 
   function parseDocument(pages) {
@@ -437,8 +562,8 @@ footer { color: var(--muted); font-size: 13px; }
     const people = new Map();
     for (const d of days) for (const p of d.people) {
       const key = `${p.section}|${p.name}`;
-      if (!people.has(key)) people.set(key, { key, name: p.name, section: p.section, prefix: p.prefix });
-      else if (p.prefix && !people.get(key).prefix) people.get(key).prefix = p.prefix;
+      if (!people.has(key)) people.set(key, { key, name: p.name, section: p.section, prefix: p.prefix, manager: p.manager });
+      else if (p.prefix && !people.get(key).prefix) Object.assign(people.get(key), { prefix: p.prefix, manager: false });
     }
     return { days, errors, people: [...people.values()] };
   }
@@ -486,10 +611,11 @@ footer { color: var(--muted); font-size: 13px; }
         const hrs = fixed || defaultHours(s);
         const end = new Date(start.getTime() + hrs * 3600e3);
         const f = (d) => `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00`;
-        const title = s.kind === 'call' ? 'Banquets: call time' : `${s.functionName}${s.location ? ' · ' + s.location : ''}`;
+        const title = `${s.functionName}${s.location ? ' · ' + s.location : ''}`;
         const desc = [
           s.code ? `Marked: ${s.code}` : '',
           s.func ? `Function: ${s.func}` : '',
+          s.managers && s.managers.length ? `Manager: ${s.managers.join(', ')}` : '',
           s.guests ? `Guests: ${s.guests}` : '',
           s.uniform ? `Special uniform: ${s.uniform}` : '',
           `In-time: ${formatTime(s.time)}${s.time.assumed ? ' (a.m./p.m. assumed)' : ''}`,
@@ -512,7 +638,7 @@ footer { color: var(--muted); font-size: 13px; }
     return { text: lines.filter((l) => l !== null).map(fold).join('\r\n') + '\r\n', count };
   }
 
-  const api = { parseTime, formatTime, parsePage, parseDocument, scheduleFor, shiftsFor, icsFor, FUNCTION_NAMES, defaultHours };
+  const api = { parseTime, formatTime, parsePage, parseDocument, scheduleFor, shiftsFor, crewFor, giveAwayFor, icsFor, FUNCTION_NAMES, AVAIL_SLOTS, defaultHours };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BQT = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -690,7 +816,7 @@ footer { color: var(--muted); font-size: 13px; }
       if (!groups[sec]) continue;
       const og = document.createElement('optgroup'); og.label = sec;
       groups[sec].slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((p) => {
-        const o = el('option', null, p.prefix ? `${p.name} (${p.prefix})` : p.name); o.value = p.key; og.appendChild(o);
+        const o = el('option', null, p.prefix ? `${p.name} (${p.prefix})` : p.manager ? `${p.name} (Manager)` : p.name); o.value = p.key; og.appendChild(o);
       });
       sel.appendChild(og);
     }
@@ -717,22 +843,22 @@ footer { color: var(--muted); font-size: 13px; }
   }
 
   // ---------- rendering ----------
-  function slip(s) {
+  function slip(s, day, person) {
     const card = el('article', 'slip');
     const t = el('div', 'time', s.time ? BQT.formatTime(s.time) : '—');
-    if (s.kind === 'call') t.appendChild(el('small', null, 'Call'));
-    else if (s.time && s.time.assumed) t.appendChild(el('small', null, s.time.hour < 12 ? 'a.m. assumed' : 'p.m. assumed'));
+    if (s.time && s.time.assumed) t.appendChild(el('small', null, s.time.hour < 12 ? 'a.m. assumed' : 'p.m. assumed'));
     card.appendChild(t);
     const fn = el('div', 'fn');
     if (s.kind !== 'call') fn.appendChild(el('span', 'code', s.code || s.func || '?'));
-    fn.appendChild(el('span', 'fname', s.kind === 'call' ? 'Call time' : s.functionName));
+    fn.appendChild(el('span', 'fname', s.functionName));
     card.appendChild(fn);
-    if (s.kind !== 'break') card.appendChild(el('div', 'loc', s.kind === 'call' ? 'No event column; time listed beside your name' : (s.location || 'Location not labeled')));
+    if (s.kind === 'event') card.appendChild(el('div', 'loc', s.location || 'Location not labeled'));
     const meta = el('div', 'meta');
+    if (s.managers && s.managers.length) meta.appendChild(el('span', null, `Manager: ${s.managers.join(', ')}`));
     if (s.guests) meta.appendChild(el('span', null, `${s.guests} guests`));
     if (s.uniform) meta.appendChild(el('span', 'uniform', `Uniform: ${s.uniform}`));
-    // Coffee break cells only hold the time, so show the raw cell when something about it needs checking.
-    const showCell = s.kind === 'break' ? s.warnings.length > 0 : !/^[A-Za-z]{1,3}$/.test(s.cellText);
+    // Coffee break and in-time cells only hold the time, so show the raw cell when something about it needs checking.
+    const showCell = s.kind !== 'event' ? s.warnings.length > 0 : !/^[A-Za-z]{1,3}$/.test(s.cellText);
     if (s.cellText && showCell) meta.appendChild(el('span', null, `Cell: ${s.cellText}`));
     if (meta.childNodes.length) card.appendChild(meta);
     if (s.warnings && s.warnings.length) {
@@ -740,16 +866,98 @@ footer { color: var(--muted); font-size: 13px; }
       s.warnings.forEach((w) => { const d = el('div', 'check'); d.append(el('b', null, 'Check'), document.createTextNode(w)); c.appendChild(d); });
       card.appendChild(c);
     }
+    if (s.kind !== 'call') addDetails(card, s, day, person);
     return card;
   }
 
-  function dayRow(weekday, iso, shifts, notes, listed) {
+  // Tapping a card shows who else works it and, for anyone but a manager, who could take it if it's given away.
+  function addDetails(card, s, day, person) {
+    const more = el('button', 'more', 'Who’s on this shift');
+    more.type = 'button';
+    more.setAttribute('aria-expanded', 'false');
+    card.appendChild(more);
+    card.dataset.tap = '';
+    let details = null;
+    const toggle = () => {
+      if (!details) { details = buildDetails(s, day, person); card.appendChild(details); }
+      const open = details.hidden;
+      details.hidden = !open;
+      card.classList.toggle('open', open);
+      more.setAttribute('aria-expanded', String(open));
+    };
+    more.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.details, button, a') || String(window.getSelection())) return;
+      toggle();
+    });
+  }
+
+  function personLine(li, p) {
+    li.appendChild(document.createTextNode(p.name));
+    if (p.prefix) li.appendChild(el('span', 'tag', p.prefix));
+  }
+
+  function buildDetails(s, day, person) {
+    const box = el('div', 'details');
+    box.hidden = true;
+    const crew = BQT.crewFor(day, s.column, person.key).filter((c) => !c.manager);
+    const sec = el('section');
+    sec.appendChild(el('h3', null, crew.length ? `Also on this shift · ${crew.length}` : 'Also on this shift'));
+    if (crew.length) {
+      const ul = el('ul', 'crew');
+      for (const c of crew) {
+        const li = el('li'); personLine(li, c);
+        if (c.section !== person.section) li.appendChild(el('span', 'tag', c.section));
+        // Show the cell when it says more than the column's letter, such as a personal in-time.
+        if (c.cell.toUpperCase() !== (s.func || '').toUpperCase()) li.appendChild(el('span', 'tag', c.cell));
+        ul.appendChild(li);
+      }
+      sec.appendChild(ul);
+    } else sec.appendChild(el('div', 'note', 'No one else is listed in this column.'));
+    box.appendChild(sec);
+    if (person.manager) return box;
+
+    const give = el('button', 'btn ghost', 'Give this shift away');
+    give.type = 'button';
+    const list = el('section'); list.hidden = true;
+    give.addEventListener('click', () => {
+      if (!list.childNodes.length) fillGiveAway(list, s, day, person);
+      list.hidden = !list.hidden;
+      give.textContent = list.hidden ? 'Give this shift away' : 'Hide who could take it';
+    });
+    box.append(give, list);
+    return box;
+  }
+
+  function fillGiveAway(list, s, day, person) {
+    const g = BQT.giveAwayFor(day, s, person.key);
+    list.appendChild(el('h3', null, `Who could take it · ${g.candidates.length}`));
+    const rules = ['Listed in seniority order, as on the schedule.', `Not already on this shift, and no other ${g.evening ? 'evening' : 'overlapping daytime'} shift that day.`];
+    if (g.availKnown) rules.push(`Not marked X for ${g.slotName}.`);
+    else rules.push('Couldn’t read the availability columns for this shift, so X marks weren’t checked.');
+    list.appendChild(el('p', 'note', rules.join(' ')));
+    if (!g.candidates.length) { list.appendChild(el('div', 'note', 'No one fits.')); return; }
+    const ol = el('ol', 'cands');
+    for (const c of g.candidates) {
+      const li = el('li'); personLine(li, c);
+      if (c.prefers) li.appendChild(el('span', 'pref', `Wants ${g.slotName}`));
+      const also = [];
+      if (c.availNote) also.push(`Wrote “${c.availNote}” for ${g.slotName}`);
+      const short = (x) => x.kind === 'break' ? `${x.functionKey} coffee` : x.kind === 'call' ? 'in' : (x.code || x.func || x.functionName);
+      if (c.shifts.length) also.push('Also working ' + c.shifts.map((x) => `${short(x)} ${x.time ? BQT.formatTime(x.time) : ''}`.trim()).join(', '));
+      if (also.length) li.appendChild(el('span', 'also', also.join(' · ')));
+      ol.appendChild(li);
+    }
+    list.appendChild(ol);
+  }
+
+  function dayRow(weekday, iso, shifts, notes, listed, day, person) {
     const row = el('div', 'day' + (shifts.length ? '' : ' off'));
     const head = el('div', 'dhead');
     head.append(el('div', 'dname', dayAbbr(weekday)), el('div', 'ddate', shortDate(iso)));
     row.appendChild(head);
     const body = el('div', 'shifts');
-    if (shifts.length) shifts.forEach((s) => body.appendChild(slip(s)));
+    if (shifts.length) shifts.forEach((s) => body.appendChild(slip(s, day, person)));
     else body.appendChild(el('div', 'offline', listed === false ? 'Not on this day’s sheet' : 'Not scheduled'));
     if (notes && notes.length) body.appendChild(el('div', 'note', `Written beside name: ${notes.join(' ')}`));
     row.appendChild(body);
@@ -766,7 +974,7 @@ footer { color: var(--muted); font-size: 13px; }
       el('span', 'what', `${count} ${count === 1 ? 'shift' : 'shifts'} on ${days} ${days === 1 ? 'day' : 'days'}${checks ? ` · ${checks} to check` : ''}`));
     root.appendChild(sum);
     const week = el('div', 'week');
-    sched.forEach((e) => week.appendChild(dayRow(e.day.weekday, e.day.date, e.shifts, e.notes, e.listed)));
+    sched.forEach((e) => week.appendChild(dayRow(e.day.weekday, e.day.date, e.shifts, e.notes, e.listed, e.day, person)));
     root.appendChild(week);
   }
 
@@ -814,8 +1022,9 @@ footer { color: var(--muted); font-size: 13px; }
       const d = `${pretty(dayAbbr(e.day.weekday))} ${shortDate(e.day.date)}`;
       if (!e.shifts.length) { lines.push(`${d}: off`); continue; }
       for (const s of e.shifts) {
-        const bits = [s.time ? BQT.formatTime(s.time) : '?', s.kind === 'call' ? 'Call time' : s.functionName];
+        const bits = [s.time ? BQT.formatTime(s.time) : '?', s.functionName];
         if (s.location) bits.push(s.location);
+        if (s.managers && s.managers.length) bits.push(`Manager: ${s.managers.join(', ')}`);
         if (s.guests) bits.push(`${s.guests} guests`);
         if (s.uniform) bits.push(`Uniform: ${s.uniform}`);
         let line = `${d}: ${bits.join(' · ')}`;
