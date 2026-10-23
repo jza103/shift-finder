@@ -394,7 +394,8 @@ footer { color: var(--muted); font-size: 13px; }
           code = code ? code + ' ' + v.toUpperCase() : v.toUpperCase();
         }
       }
-      if (time && !code && isBreakCol) kind = breakType ? 'break' : 'call';
+      if (breakType) kind = 'break';
+      else if (time && !code && isBreakCol) kind = 'call';
       if (!time && code && isBreakCol && !/^(AM|PM)$/.test(code)) { extraNotes.push(`Marked ${code}`); continue; }
       if (!time) {
         if (c.intime) time = parseTime(c.intime, code || breakType || fn);
@@ -402,10 +403,15 @@ footer { color: var(--muted); font-size: 13px; }
       }
       if (time && time.uncertain) warnings.push(`The time "${time.raw}" looks like a typo; read it as ${formatTime(time)}.`);
       if (time && time.extra && /[^A-Za-z]/.test(time.extra)) warnings.push(`Unusual time entry "${time.raw}".`);
+      if (kind === 'break' && time && time.assumed && values.some((v) => /^\d/.test(v))) {
+        warnings.push(`The cell says "${time.raw}" with no a.m./p.m.; read it as ${formatTime(time)} because this is the ${breakType} coffee break.`);
+      }
       if (code && fn) {
         const ok = code === fn || (fn === 'CB' && /^(AM|PM)$/.test(code)) || code.split(' ').includes(fn);
         if (!ok) warnings.push(`Marked "${code}", but this column's function is "${fn}".`);
-        else if (breakType && /^(AM|PM)$/.test(code) && code !== breakType) warnings.push(`Marked "${code}", but this is the ${c.location} column.`);
+        else if (breakType && /^(AM|PM)$/.test(code) && code !== breakType) {
+          warnings.push(`Marked "${code}", but this is the ${c.location} column, so it's unclear which coffee break this is. Shown at this column's in-time.`);
+        }
       }
       if (kind === 'event' && !breakType && !c.location) warnings.push('No location label found for this column.');
       const fnKey = kind === 'call' ? 'CALL' : kind === 'break' ? breakType : (code && FUNCTION_NAMES[code.split(' ')[0]] ? code.split(' ')[0] : fn);
@@ -725,7 +731,9 @@ footer { color: var(--muted); font-size: 13px; }
     const meta = el('div', 'meta');
     if (s.guests) meta.appendChild(el('span', null, `${s.guests} guests`));
     if (s.uniform) meta.appendChild(el('span', 'uniform', `Uniform: ${s.uniform}`));
-    if (s.cellText && !/^[A-Za-z]{1,3}$/.test(s.cellText)) meta.appendChild(el('span', null, `Cell: ${s.cellText}`));
+    // Coffee break cells only hold the time, so show the raw cell when something about it needs checking.
+    const showCell = s.kind === 'break' ? s.warnings.length > 0 : !/^[A-Za-z]{1,3}$/.test(s.cellText);
+    if (s.cellText && showCell) meta.appendChild(el('span', null, `Cell: ${s.cellText}`));
     if (meta.childNodes.length) card.appendChild(meta);
     if (s.warnings && s.warnings.length) {
       const c = el('div', 'checks');
