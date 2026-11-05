@@ -53,6 +53,12 @@ header { display: grid; gap: 4px; border-bottom: 4px solid var(--band); padding-
 h1 { font-family: var(--display); font-weight: 700; font-size: clamp(34px, 8vw, 48px); line-height: 1; margin: 0; letter-spacing: .01em; text-wrap: balance; }
 .lede { color: var(--muted); margin: 6px 0 0; max-width: 60ch; }
 
+.beta {
+  background: var(--warn-bg); color: var(--ink); border: 2px solid var(--warn); border-radius: 10px;
+  padding: 12px 14px; font-size: 15px; display: grid; gap: 2px;
+}
+.beta strong { font-family: var(--display); text-transform: uppercase; letter-spacing: .06em; font-size: 20px; line-height: 1.1; color: var(--warn); }
+
 .drop {
   border: 2px dashed var(--line); border-radius: 10px; background: var(--surface);
   padding: 22px; display: grid; gap: 10px; justify-items: start; transition: border-color .15s, background .15s;
@@ -162,6 +168,11 @@ footer { color: var(--muted); font-size: 13px; }
     <h1>Shift Finder</h1>
     <p class="lede">Drop in the weekly schedule PDF, pick a name, and see each shift's in-time, function, and location. The file is read on your device and never uploaded.</p>
   </header>
+
+  <aside class="beta" role="note">
+    <strong>🚧 Beta: still learning to read schedules</strong>
+    <span><b>Shift Finder is not responsible for missed or late shifts.</b> The printed schedule is the boss, so give your times a quick look against the PDF. When in doubt, go with the earlier time. Nobody ever got written up for being early, and the coffee's fresher.</span>
+  </aside>
 
   <section class="drop" id="drop" aria-label="Schedule PDF">
     <h2 id="dropTitle">Weekly schedule PDF</h2>
@@ -293,6 +304,24 @@ footer { color: var(--muted); font-size: 13px; }
     return { raw: s, hour: hour24, minute: min, assumed, uncertain, extra: (m[4] || '').trim() };
   }
 
+  // Reads a cell that may hold more than one time ("1030a 10a", "10a/1030a", "10a-2p"). When the schedule is
+  // ambiguous, the earliest time wins: better early than late. `choices` lists every time found when there
+  // were several. A single time keeps any trailing letters (like the B in "4pB" for a bartender).
+  function readTime(raw, ctx) {
+    const s = String(raw).trim();
+    const parts = s.split(/[\s,/&+]+|(?<=[a-z])-(?=\d)/i).filter((p) => /^\d/.test(p));
+    if (parts.length < 2) return parseTime(s, ctx);
+    const times = parts.map((p) => parseTime(p, ctx)).filter(Boolean);
+    if (!times.length) return null;
+    const mins = (t) => t.hour * 60 + t.minute;
+    const distinct = [...new Map(times.map((t) => [mins(t), t])).values()].sort((a, b) => mins(a) - mins(b));
+    const first = distinct[0];
+    return { ...first, raw: s, extra: '', choices: distinct.length > 1 ? distinct : null };
+  }
+  const severalTimes = (t, where) => t && t.choices
+    ? `${where} lists more than one time ("${t.raw}"); showing the earliest, ${formatTime(t)}, to be safe. Confirm with the schedule maker.`
+    : null;
+
   function formatTime(t) {
     if (!t) return '';
     const h12 = ((t.hour + 11) % 12) + 1;
@@ -330,14 +359,22 @@ footer { color: var(--muted); font-size: 13px; }
     const fnItems = rowItems(rowY.func).sort((a, b) => x(a) - x(b));
     if (!fnItems.length) return { error: `Page ${pageIndex + 1}: "Function" row is empty, skipped.` };
 
-    // Column grid: uniform pitch, origin at the first Function cell
+    // Columns are anchored to where the header cells actually sit, not to a grid with an assumed spacing.
+    // Exports come at different scales (about 35 pt between columns some weeks, 24.6 pt others), and a
+    // grid with the wrong spacing silently runs two neighbouring events together.
     const c0 = cx(fnItems[0]);
-    const headerXs = [];
-    for (const k of ['func', 'guests', 'intime', 'needed']) if (rowY[k] != null) headerXs.push(...rowItems(rowY[k]).map(cx));
-    let pitch = 35.2;
-    const ests = headerXs.map((v) => { const k = Math.round((v - c0) / pitch); return k >= 1 ? (v - c0) / k : null; }).filter((v) => v);
-    if (ests.length) pitch = median(ests);
-    const colOf = (xx) => Math.round((xx - c0) / pitch);
+    const { anchors, pitch } = columnAnchors(fnItems.map(cx),
+      ['uniform', 'guests', 'intime', 'needed'].filter((k) => rowY[k] != null).flatMap((k) => rowItems(rowY[k]).map(cx)));
+    // Number each column by its slot on the page (so a blank spacer column still counts), keeping numbers increasing.
+    let prevIndex = -Infinity;
+    const anchorIndex = anchors.map((a) => (prevIndex = Math.max(Math.round((a - c0) / pitch), prevIndex + 1)));
+    const colOf = (xx) => {
+      let best = 0;
+      for (let j = 1; j < anchors.length; j++) if (Math.abs(anchors[j] - xx) < Math.abs(anchors[best] - xx)) best = j;
+      if (Math.abs(anchors[best] - xx) <= pitch / 2) return anchorIndex[best];
+      const k = Math.round((xx - c0) / pitch); // off every known column: give it a column of its own
+      return anchorIndex.includes(k) ? anchorIndex[best] : k;
+    };
 
     const cols = {};
     const col = (k) => (cols[k] = cols[k] || { index: k, labels: [] });
@@ -408,6 +445,28 @@ footer { color: var(--muted); font-size: 13px; }
     return { pageIndex, date: iso, dateLabel: dateStr, weekday, cols, people, pitch, c0, availKnown: !!slotXs, warnings };
   }
 
+  // Column centres from the Function row (one short letter code per column, so the most reliable row), plus any
+  // other header cell that sits clearly between them (a column whose Function cell was left blank).
+  // The column spacing is measured from the gaps between neighbouring Function cells, ignoring wider gaps
+  // left by blank spacer columns.
+  function columnAnchors(fnXs, otherXs) {
+    const cluster = (xs, tol) => {
+      const out = [];
+      for (const v of [...xs].sort((a, b) => a - b)) {
+        const g = out[out.length - 1];
+        if (g && v - g.last <= tol) { g.sum += v; g.n++; g.last = v; } else out.push({ sum: v, n: 1, last: v });
+      }
+      return out.map((g) => g.sum / g.n);
+    };
+    let anchors = cluster(fnXs, 3);
+    const gaps = anchors.slice(1).map((v, i) => v - anchors[i]).filter((g) => g > 3);
+    const minGap = gaps.length ? Math.min(...gaps) : 35.2;
+    const pitch = gaps.length ? median(gaps.filter((g) => g <= minGap * 1.5)) : 35.2;
+    if (anchors.length > 1) anchors = cluster(fnXs, pitch * 0.3); // merge any split Function cell
+    const extra = cluster(otherXs.filter((v) => anchors.every((a) => Math.abs(v - a) > pitch / 2)), pitch * 0.3);
+    return { anchors: [...anchors, ...extra].sort((a, b) => a - b), pitch };
+  }
+
   // Groups the left edges of X and / marks into the three availability columns. Returns null unless exactly
   // three clear columns show up, so a page we can't read gives "unknown" rather than a wrong reading.
   function availabilitySlots(xs) {
@@ -437,8 +496,9 @@ footer { color: var(--muted); font-size: 13px; }
       // Managers and back-aisle staff (rows with no FT/PT/OC/IH prefix) don't work coffee breaks: the AM Breaks
       // column holds their in-time for the day, and the PM Break column doesn't apply to them.
       if (isBreakCol && !person.prefix) {
-        const t = breakType !== 'PM' && values.length === 1 && /^\d/.test(values[0]) ? parseTime(values[0], '') : null;
+        const t = breakType !== 'PM' && values.every((v) => /^\d/.test(v)) ? readTime(values.join(' '), '') : null;
         if (!t) { extraNotes.push(`${c.location || 'Break'} column: ${values.join(' ')}`); continue; }
+        if (t.choices) warnings.push(severalTimes(t, 'The cell'));
         if (t.uncertain) warnings.push(`The time "${t.raw}" looks like a typo; read it as ${formatTime(t)}.`);
         if (t.assumed) warnings.push(`The in-time "${t.raw}" has no a.m./p.m.; read it as ${formatTime(t)}.`);
         out.push({
@@ -448,20 +508,28 @@ footer { color: var(--muted); font-size: 13px; }
         continue;
       }
       let code = null, time = null, kind = 'event';
+      const timeTexts = [];
       for (const v of values) {
-        if (/^\d/.test(v)) {
-          const t = parseTime(v, code || breakType || fn);
-          if (t) { time = t; } else warnings.push(`Couldn't read the time "${v}".`);
-        } else {
-          code = code ? code + ' ' + v.toUpperCase() : v.toUpperCase();
-        }
+        if (/^\d/.test(v)) timeTexts.push(v);
+        else code = code ? code + ' ' + v.toUpperCase() : v.toUpperCase();
+      }
+      if (timeTexts.length) {
+        time = readTime(timeTexts.join(' '), code || breakType || fn);
+        if (!time) warnings.push(`Couldn't read the time "${timeTexts.join(' ')}".`);
+        else if (time.choices) warnings.push(severalTimes(time, 'The cell'));
       }
       if (breakType) kind = 'break';
       else if (time && !code && isBreakCol) kind = 'call';
       if (!time && code && isBreakCol && !/^(AM|PM)$/.test(code)) { extraNotes.push(`Marked ${code}`); continue; }
       if (!time) {
-        if (c.intime) time = parseTime(c.intime, code || breakType || fn);
+        if (c.intime) time = readTime(c.intime, code || breakType || fn);
         if (!time) warnings.push('No in-time listed for this column.');
+        else if (time.choices) warnings.push(severalTimes(time, "This event's header"));
+      }
+      // Each column is one event. More than one Function letter or guest count in a header means two events
+      // ran together when the page was read, so nothing on this card can be trusted without a look at the PDF.
+      if ((fn.split(' ').length > 1 || (c.guests || '').trim().split(/\s+/).length > 1) && !isBreakCol) {
+        warnings.push(`This column's header looks like two events run together (function "${fn}"${c.guests ? `, guests "${c.guests}"` : ''}), so this shift may be misread. Check the PDF.`);
       }
       if (time && time.uncertain) warnings.push(`The time "${time.raw}" looks like a typo; read it as ${formatTime(time)}.`);
       if (time && time.extra && /[^A-Za-z]/.test(time.extra)) warnings.push(`Unusual time entry "${time.raw}".`);
@@ -469,7 +537,7 @@ footer { color: var(--muted); font-size: 13px; }
         warnings.push(`The cell says "${time.raw}" with no a.m./p.m.; read it as ${formatTime(time)} because this is the ${breakType} coffee break.`);
       }
       if (code && fn) {
-        const ok = code === fn || (fn === 'CB' && /^(AM|PM)$/.test(code)) || code.split(' ').includes(fn);
+        const ok = code === fn || (fn === 'CB' && /^(AM|PM)$/.test(code)) || code.split(' ').includes(fn) || fn.split(' ').includes(code);
         if (!ok) warnings.push(`Marked "${code}", but this column's function is "${fn}".`);
         else if (breakType && /^(AM|PM)$/.test(code) && code !== breakType) {
           warnings.push(`Marked "${code}", but this is the ${c.location} column, so it's unclear which coffee break this is. Shown at this column's in-time.`);
@@ -477,7 +545,7 @@ footer { color: var(--muted); font-size: 13px; }
       }
       if (kind === 'event' && !breakType && !c.location) warnings.push('No location label found for this column.');
       // A personal time hours away from the event's own in-time (like 530a on a 5:30p reception) is a schedule typo.
-      const colTime = kind === 'event' && time && values.some((v) => /^\d/.test(v)) && c.intime ? parseTime(c.intime, fn) : null;
+      const colTime = kind === 'event' && time && values.some((v) => /^\d/.test(v)) && c.intime ? readTime(c.intime, fn) : null;
       if (colTime) {
         const mins = (t) => t.hour * 60 + t.minute;
         const gap = Math.abs(mins(time) - mins(colTime));
@@ -685,7 +753,7 @@ footer { color: var(--muted); font-size: 13px; }
     return { text: lines.filter((l) => l !== null).map(fold).join('\r\n') + '\r\n', count };
   }
 
-  const api = { parseTime, formatTime, parsePage, parseDocument, scheduleFor, shiftsFor, crewFor, crewGroups, giveAwayFor, icsFor, FUNCTION_NAMES, AVAIL_SLOTS, defaultHours };
+  const api = { parseTime, readTime, formatTime, parsePage, parseDocument, scheduleFor, shiftsFor, crewFor, crewGroups, giveAwayFor, icsFor, FUNCTION_NAMES, AVAIL_SLOTS, defaultHours };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BQT = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
