@@ -38,9 +38,12 @@ If a revised schedule comes out, do the same thing again. Each event has a stabl
 - End times are estimates, because the schedule doesn't list them. Evening shifts are 6 hours and earlier shifts are 4 hours.
 - When a cell or column lists more than one in-time, the earliest one is shown, with a **Check**. Better early than late.
 - Columns and rows are read from the cell borders drawn in the PDF. The columns are also worked out separately from where the header text lines up. If the borders can't be read (or a header cell is merged), the text alignment is used instead. If the two readings disagree about a column, or a column header still holds two events, that shift gets a **Check**. Exports at any zoom or column width read the same way.
+- The three availability columns (AM, Lunch, PM) are read from their drawn borders too, and checked against where the X and / marks cluster. If the two disagree, that day's availability is treated as unknown and the give-away list says X marks weren't checked.
 - Items marked **Check** are cells that don't add up. For example, a shift letter that doesn't match its column usually means a typo on the schedule. Confirm these with the schedule maker.
 - Only the PDF exported from Excel works. Scans and photos don't.
 
 ## Development
+
+The version and last-updated date are at the bottom of the page (`footer .version` in `index.html`). Bump both with every change that ships.
 
 See `CLAUDE.md`. In short: `npm install`, edit `src/`, then `npm run build` and `npm test`.
