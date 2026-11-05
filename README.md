@@ -6,6 +6,8 @@ The schedule is read entirely on your device. Nothing is uploaded.
 
 **Live:** https://jza103.github.io/shift-finder/ (add `#yourname` to preselect a name, e.g. `#vanessa`)
 
+> **🚧 Beta.** Shift Finder is still learning to read schedules and is **not responsible for missed or late shifts.** Check your times against the PDF, and when in doubt, go with the earlier time.
+
 ## Using it on iPhone
 
 **Fastest: straight from Mail (one-time setup).** Add the ready-made Shortcut from https://www.icloud.com/shortcuts/6af661108f4c477687e930bb4aaf6017 (tap **Add Shortcut**), or build it with the steps below. From then on, open the schedule PDF in Mail, tap **Share**, then tap the shortcut. The page opens; tap **Paste from Shortcut**, then **Paste**, and your week appears. The steps are also on the page under *iPhone: open the schedule straight from Mail*.
@@ -34,6 +36,8 @@ If a revised schedule comes out, do the same thing again. Each event has a stabl
 ## Notes
 
 - End times are estimates, because the schedule doesn't list them. Evening shifts are 6 hours and earlier shifts are 4 hours.
+- When a cell or column lists more than one in-time, the earliest one is shown, with a **Check**. Better early than late.
+- Columns are found from where the Function cells sit on the page, so exports at any zoom or column width read the same way. A column header that still holds two events gets a **Check**.
 - Items marked **Check** are cells that don't add up. For example, a shift letter that doesn't match its column usually means a typo on the schedule. Confirm these with the schedule maker.
 - Only the PDF exported from Excel works. Scans and photos don't.
 
