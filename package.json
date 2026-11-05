@@ -1,0 +1,12 @@
+{
+  "name": "shift-finder",
+  "private": true,
+  "description": "BQT Shift Finder: reads the weekly banquet schedule PDF in the browser.",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "fixture": "node test/tools/make-fixture.js"
+  },
+  "devDependencies": {
+    "pdfjs-dist": "3.11.174"
+  }
+}

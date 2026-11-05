@@ -241,7 +241,7 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
   <footer>
     <span>Tap a shift to see who else is on it and who could take it if you give it away. Locations come from the slanted column headers. Checks flag cells that don't match their column, typo-looking times, and a.m./p.m. that had to be assumed.</span>
     <!-- Bump the version and date with every change that ships. -->
-    <span class="version">Shift Finder v0.5.1 beta · Updated <time datetime="2026-11-05">Nov 5, 2026</time></span>
+    <span class="version">Shift Finder v0.5.2 beta · Updated <time datetime="2026-11-05">Nov 5, 2026</time></span>
   </footer>
 </div>
 
@@ -461,7 +461,9 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
     // Rows: two pieces of text are on the same row when they sit between the same pair of drawn horizontal
     // borders. Without borders (or for text outside them), when their baselines are within 2.5 pt.
     const rowLines = borders ? borders.h.filter((l) => l.from <= labelX + 5 * S && l.to >= labelX + 100 * S).map((l) => l.at).sort((a, b) => b - a) : [];
-    const midY = (i) => y(i) + fs(i.transform) * 0.3;
+    // Excel sets text on the bottom of its cell, so a point just above the baseline is inside the text's own row,
+    // even when the text is taller than the row (like the 0s in the thin spacer rows) and spills into the one above.
+    const midY = (i) => y(i) + fs(i.transform) * 0.1;
     const bandOf = (i) => {
       if (rowLines.length < 3) return null;
       const m = midY(i);

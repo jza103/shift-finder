@@ -44,6 +44,22 @@ If a revised schedule comes out, do the same thing again. Each event has a stabl
 
 ## Development
 
+The whole app is `index.html`: the page, its styles, and the schedule parser (the `// BQT schedule parser` script block, which has no DOM code).
+
 The version and last-updated date are at the bottom of the page (`footer .version` in `index.html`). Bump both with every change that ships.
 
-See `CLAUDE.md`. In short: `npm install`, edit `src/`, then `npm run build` and `npm test`.
+### Tests
+
+```
+npm test
+```
+
+Needs Node 22 or later and nothing else. The tests also run on every pull request (GitHub Actions).
+
+- `test/schedule.test.js` checks a real week (WE 11/13/2026) end to end. It compares against a snapshot of every shift, note and give-away list, and has named checks for bugs already fixed, like Vanessa's 10a lunch that read as 10:30a.
+- `test/robustness.test.js` re-reads the same week zoomed 0.5× to 3×, with hairline to thick borders, with no borders, with a border missing, and with text nudged out of line. It checks that the results stay the same, or that the right Check shows up.
+- `test/time.test.js` and `test/borders.test.js` are small unit tests for reading times and reading cell borders.
+
+When a change is meant to alter what the app shows, run `UPDATE=1 npm test`, then review the diff of `test/fixtures/*.expected.json` before committing it. To see what a change broke, run `PARSER_HTML=path/to/other/index.html npm test` against another version of the page.
+
+**Adding a week as a test fixture.** Run `npm install` once (it fetches pdf.js), then `npm run fixture -- <schedule.pdf> <name> --keep Vanessa`. The fixture keeps every position from the PDF but replaces each person's name (except those listed with `--keep`) and each event location. The repo is public, so never commit the PDF itself. Copy the snapshot test in `test/schedule.test.js` for the new fixture.
