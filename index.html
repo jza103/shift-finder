@@ -241,7 +241,7 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
   <footer>
     <span>Tap a shift to see who else is on it and who could take it if you give it away. Locations come from the slanted column headers. Checks flag cells that don't match their column, typo-looking times, and a.m./p.m. that had to be assumed.</span>
     <!-- Bump the version and date with every change that ships. -->
-    <span class="version">Shift Finder v0.5.0 beta · Updated <time datetime="2026-11-05">Nov 5, 2026</time></span>
+    <span class="version">Shift Finder v0.5.1 beta · Updated <time datetime="2026-11-05">Nov 5, 2026</time></span>
   </footer>
 </div>
 
@@ -335,8 +335,10 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
   }
 
   // The cell borders Excel draws, read from the page's drawing commands (pdf.js operator list): thin filled
-  // rectangles, or stroked straight lines. Returns horizontal and vertical lines in page coordinates, the same
-  // space as the text positions. White lines are skipped, since they don't show on the printed schedule.
+  // rectangles, or stroked straight lines. Returns horizontal and vertical candidates in page coordinates, the
+  // same space as the text positions, each with its thickness. No fixed sizes here: an export can be scaled
+  // up or down, and borders can be hairline or thick, so parsePage decides what counts as a border by comparing
+  // with the page's own text size. White lines are skipped, since they don't show on the printed schedule.
   function linesFromOps(opList, OPS) {
     const out = [];
     const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3],
@@ -348,20 +350,26 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
       if (typeof c === 'string') { const m = c.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i); if (!m) return false; rgb = m.slice(1).map((h) => parseInt(h, 16)); }
       return rgb[0] >= 240 && rgb[1] >= 240 && rgb[2] >= 240;
     };
-    const add = (x0, y0, x1, y1) => {
-      const w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
-      if (h <= 1.5 && w >= 3) out.push({ dir: 'h', at: (y0 + y1) / 2, from: Math.min(x0, x1), to: Math.max(x0, x1) });
-      else if (w <= 1.5 && h >= 3) out.push({ dir: 'v', at: (x0 + x1) / 2, from: Math.min(y0, y1), to: Math.max(y0, y1) });
+    // A filled shape is a line candidate when it's at least three times longer than it is thick. A stroked
+    // segment is one when it runs straight across or straight down; its thickness is the pen width.
+    const add = (x0, y0, x1, y1, pen) => {
+      const w = Math.abs(x1 - x0), h = Math.abs(y1 - y0), len = Math.max(w, h);
+      if (!(len > 0)) return;
+      const thick = pen == null ? Math.min(w, h) : pen;
+      if (pen == null ? Math.min(w, h) * 3 > len : Math.min(w, h) > len * 0.02) return;
+      if (w >= h) out.push({ dir: 'h', at: (y0 + y1) / 2, from: Math.min(x0, x1), to: Math.max(x0, x1), thick });
+      else out.push({ dir: 'v', at: (x0 + x1) / 2, from: Math.min(y0, y1), to: Math.max(y0, y1), thick });
     };
     const FILLS = new Set([OPS.fill, OPS.eoFill]);
     const STROKES = new Set([OPS.stroke, OPS.closeStroke]);
     const BOTH = new Set([OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
-    let ctm = [1, 0, 0, 1, 0, 0], fill = null, stroke = null, paths = [];
+    let ctm = [1, 0, 0, 1, 0, 0], fill = null, stroke = null, pen = 1, paths = [];
     const stack = [];
     for (let i = 0; i < opList.fnArray.length; i++) {
       const fn = opList.fnArray[i], a = opList.argsArray[i];
-      if (fn === OPS.save) stack.push([ctm, fill, stroke]);
-      else if (fn === OPS.restore) { if (stack.length) [ctm, fill, stroke] = stack.pop(); }
+      if (fn === OPS.save) stack.push([ctm, fill, stroke, pen]);
+      else if (fn === OPS.restore) { if (stack.length) [ctm, fill, stroke, pen] = stack.pop(); }
+      else if (fn === OPS.setLineWidth) pen = a[0];
       else if (fn === OPS.transform) ctm = mul(ctm, a);
       else if (fn === OPS.setFillRGBColor) fill = a;
       else if (fn === OPS.setStrokeRGBColor) stroke = a;
@@ -386,7 +394,9 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
             const xs = p.pts.map((q) => q[0]), ys = p.pts.map((q) => q[1]);
             add(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
           }
-          if (!FILLS.has(fn) && !light(stroke)) for (let k = 1; k < p.pts.length; k++) add(...p.pts[k - 1], ...p.pts[k]);
+          // Pen width in page units: scaled by the drawing transform (0 means the thinnest line the device can draw).
+          const penOnPage = pen * Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]));
+          if (!FILLS.has(fn) && !light(stroke)) for (let k = 1; k < p.pts.length; k++) add(...p.pts[k - 1], ...p.pts[k], penOnPage);
         }
         paths = [];
       }
@@ -394,14 +404,19 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
     return out;
   }
 
-  // Merges border pieces that sit on the same line (Excel often draws one line as many short pieces).
-  function bordersFrom(lines) {
+  // Keeps the candidates thin enough to be borders and merges pieces that sit on the same line (Excel often draws
+  // one line as many short pieces). `em` is the page's text size: a border is at most about a third of the text
+  // height thick (cell fills and shading are thicker than that), and at least about half the text height long.
+  function bordersFrom(lines, em = 7.56) {
     if (!lines || !lines.length) return null;
+    lines = lines.filter((l) => (l.thick == null || l.thick <= em * 0.35) && l.to - l.from >= em * 0.4);
+    if (!lines.length) return null;
+    const tol = em * 0.13;
     const merge = (list) => {
       const out = [];
       for (const l of [...list].sort((a, b) => a.at - b.at)) {
         const g = out[out.length - 1];
-        if (g && l.at - g.last <= 1) { g.sum += l.at; g.n++; g.last = l.at; g.from = Math.min(g.from, l.from); g.to = Math.max(g.to, l.to); }
+        if (g && l.at - g.last <= tol) { g.sum += l.at; g.n++; g.last = l.at; g.from = Math.min(g.from, l.from); g.to = Math.max(g.to, l.to); }
         else out.push({ sum: l.at, n: 1, last: l.at, from: l.from, to: l.to });
       }
       return out.map((g) => ({ at: g.sum / g.n, from: g.from, to: g.to }));
@@ -439,10 +454,13 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
     const fnLabel = up.find((i) => i.str.trim() === 'Function');
     if (!fnLabel) return { error: `Page ${pageIndex + 1}: no "Function" row found, skipped.` };
     const labelX = x(fnLabel);
-    const borders = bordersFrom(lines);
+    // Distances below are tuned on an export whose text is 7.56 pt, and scale with this page's text size, so an
+    // export that's zoomed in or out (or fitted to a different paper size) reads the same way.
+    const em = fs(fnLabel.transform), S = em / 7.56;
+    const borders = bordersFrom(lines, em);
     // Rows: two pieces of text are on the same row when they sit between the same pair of drawn horizontal
     // borders. Without borders (or for text outside them), when their baselines are within 2.5 pt.
-    const rowLines = borders ? borders.h.filter((l) => l.from <= labelX + 5 && l.to >= labelX + 100).map((l) => l.at).sort((a, b) => b - a) : [];
+    const rowLines = borders ? borders.h.filter((l) => l.from <= labelX + 5 * S && l.to >= labelX + 100 * S).map((l) => l.at).sort((a, b) => b - a) : [];
     const midY = (i) => y(i) + fs(i.transform) * 0.3;
     const bandOf = (i) => {
       if (rowLines.length < 3) return null;
@@ -450,13 +468,13 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
       for (let j = 0; j + 1 < rowLines.length; j++) if (m < rowLines[j] && m > rowLines[j + 1]) return j;
       return null;
     };
-    const sameRow = (a, b) => { const ba = bandOf(a), bb = bandOf(b); return ba != null && bb != null ? ba === bb : Math.abs(y(a) - y(b)) < 2.5; };
+    const sameRow = (a, b) => { const ba = bandOf(a), bb = bandOf(b); return ba != null && bb != null ? ba === bb : Math.abs(y(a) - y(b)) < 2.5 * S; };
     const rowY = {}, rowLabel = {};
     for (const i of up) {
       const key = HEADER_ROWS[i.str.trim()];
       if (key && !(key in rowY)) { rowY[key] = y(i); rowLabel[key] = i; }
     }
-    const rowItems = (key) => up.filter((i) => sameRow(i, rowLabel[key]) && x(i) > labelX + 60);
+    const rowItems = (key) => up.filter((i) => sameRow(i, rowLabel[key]) && x(i) > labelX + 60 * S);
     const fnItems = rowItems('func').sort((a, b) => x(a) - x(b));
     if (!fnItems.length) return { error: `Page ${pageIndex + 1}: "Function" row is empty, skipped.` };
 
@@ -466,7 +484,7 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
     const c0 = cx(fnItems[0]);
     const headerItems = ['func', 'uniform', 'guests', 'intime', 'needed'].filter((k) => rowLabel[k]).flatMap((k) => rowItems(k));
     // Two independent readings of the columns. By text: where the header cells' text lines up.
-    const text = columnAnchors(fnItems.map(cx), headerItems.filter((i) => !fnItems.includes(i)).map(cx));
+    const text = columnAnchors(fnItems.map(cx), headerItems.filter((i) => !fnItems.includes(i)).map(cx), S);
     const textIndex = slotNumbers(text.anchors, c0, text.pitch);
     const textColOf = (xx) => {
       const best = nearestIndex(text.anchors, xx);
@@ -476,7 +494,7 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
     };
     // By borders: the cells between the drawn vertical lines that cross the Function row. This is the real grid,
     // so it wins whenever it makes sense; otherwise (no borders, or merged header cells) the text reading is used.
-    const grid = borderColumns(borders, midY(fnLabel), fnItems.map(cx));
+    const grid = borderColumns(borders, midY(fnLabel), fnItems.map(cx), S);
     const cellIndex = grid ? slotNumbers(grid.cells.map((g) => (g.x0 + g.x1) / 2), (grid.cells[0].x0 + grid.cells[0].x1) / 2, grid.pitch) : null;
     const cellAt = (xx) => (grid ? grid.cells.findIndex((g) => xx >= g.x0 && xx < g.x1) : -1);
     const colOf = (xx) => { const j = cellAt(xx); return j >= 0 ? cellIndex[j] : textColOf(xx); };
@@ -523,9 +541,9 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
 
     // People rows
     const headerBottom = Math.min(...Object.values(rowY));
-    const nameItems = up.filter((i) => Math.abs(x(i) - labelX) < 3 && y(i) < headerBottom - 3 && /[A-Za-z]/.test(i.str) && !HEADER_ROWS[i.str.trim()]);
+    const nameItems = up.filter((i) => Math.abs(x(i) - labelX) < 3 * S && y(i) < headerBottom - 3 * S && /[A-Za-z]/.test(i.str) && !HEADER_ROWS[i.str.trim()]);
     // Section markers ("BAR", "BACK AISLE", or any other) are all-caps labels on a row of their own, left of the grid.
-    const sectionMarks = up.filter((i) => /^[A-Z][A-Z &/'-]{2,}$/.test(i.str.trim()) && x(i) < c0 - pitch && y(i) < headerBottom - 3
+    const sectionMarks = up.filter((i) => /^[A-Z][A-Z &/'-]{2,}$/.test(i.str.trim()) && x(i) < c0 - pitch && y(i) < headerBottom - 3 * S
       && !nameItems.some((n) => sameRow(n, i)))
       .map((i) => { const t = i.str.trim().replace(/\s+/g, ' '); return { y: y(i), name: t[0] + t.slice(1).toLowerCase() }; })
       .sort((a, b) => b.y - a.y);
@@ -539,7 +557,7 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
       const section = sectionAt(yy);
       const notes = [], marks = [], cells = {};
       for (const i of row) {
-        if (i === prefixItem || x(i) < x(n) + n.width - 1) continue;
+        if (i === prefixItem || x(i) < x(n) + n.width - 1 * S) continue;
         const v = i.str.trim();
         if (cx(i) < gridLeft) { notes.push(v); marks.push({ x: x(i), cx: cx(i), v }); continue; }
         const k = colOf(cx(i));
@@ -558,9 +576,9 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
     // any mark in a different column, availability is left unknown for the day rather than read wrong.
     const isMark = (m) => /^[X/]$/i.test(m.v);
     const allMarks = people.flatMap((p) => p.marks.filter(isMark));
-    const slotXs = availabilitySlots(allMarks.map((m) => m.x));
-    const bySlotXs = (m) => slotXs.findIndex((sx) => Math.abs(m.x - sx) < 5);
-    const availCells = grid ? availabilityCells(borders, gridLeft, labelX, nameItems.map(y)) : null;
+    const slotXs = availabilitySlots(allMarks.map((m) => m.x), S);
+    const bySlotXs = (m) => slotXs.findIndex((sx) => Math.abs(m.x - sx) < 5 * S);
+    const availCells = grid ? availabilityCells(borders, gridLeft, labelX, nameItems.map(y), S) : null;
     const byCells = (m) => availCells.findIndex((g) => m.cx >= g.x0 && m.cx < g.x1);
     let slotOf = availCells ? byCells : slotXs ? bySlotXs : null;
     let availSource = availCells ? 'borders' : slotXs ? 'marks' : 'none';
@@ -574,14 +592,14 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
       delete p.marks;
     }
     return { pageIndex, date: iso, dateLabel: dateStr, weekday, cols, people, pitch, c0, availKnown: !!slotOf, warnings,
-      columnSource: grid ? 'borders' : 'text', rowSource: rowLines.length >= 3 ? 'borders' : 'text', availSource };
+      columnSource: grid ? 'borders' : 'text', rowSource: rowLines.length >= 3 ? 'borders' : 'text', availSource, scale: S };
   }
 
   // Column centres from the Function row (one short letter code per column, so the most reliable row), plus any
   // other header cell that sits clearly between them (a column whose Function cell was left blank).
   // The column spacing is measured from the gaps between neighbouring Function cells, ignoring wider gaps
   // left by blank spacer columns.
-  function columnAnchors(fnXs, otherXs) {
+  function columnAnchors(fnXs, otherXs, S = 1) {
     const cluster = (xs, tol) => {
       const out = [];
       for (const v of [...xs].sort((a, b) => a - b)) {
@@ -590,10 +608,10 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
       }
       return out.map((g) => g.sum / g.n);
     };
-    let anchors = cluster(fnXs, 3);
-    const gaps = anchors.slice(1).map((v, i) => v - anchors[i]).filter((g) => g > 3);
-    const minGap = gaps.length ? Math.min(...gaps) : 35.2;
-    const pitch = gaps.length ? median(gaps.filter((g) => g <= minGap * 1.5)) : 35.2;
+    let anchors = cluster(fnXs, 3 * S);
+    const gaps = anchors.slice(1).map((v, i) => v - anchors[i]).filter((g) => g > 3 * S);
+    const minGap = gaps.length ? Math.min(...gaps) : 24.6 * S;
+    const pitch = gaps.length ? median(gaps.filter((g) => g <= minGap * 1.5)) : 24.6 * S;
     if (anchors.length > 1) anchors = cluster(fnXs, pitch * 0.3); // merge any split Function cell
     const extra = cluster(otherXs.filter((v) => anchors.every((a) => Math.abs(v - a) > pitch / 2)), pitch * 0.3);
     return { anchors: [...anchors, ...extra].sort((a, b) => a - b), pitch };
@@ -602,18 +620,18 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
   // Column cells from the drawn vertical borders that cross the Function row, starting with the cell that holds the
   // first Function letter. Returns null unless the borders make sense: every Function letter sits in a cell, and no
   // cell holds two of them (which would mean a merged header cell, or borders we misread).
-  function borderColumns(borders, fnY, fnXs) {
+  function borderColumns(borders, fnY, fnXs, S = 1) {
     if (!borders) return null;
     const xs = borders.v.filter((l) => l.from <= fnY && l.to >= fnY).map((l) => l.at).sort((a, b) => a - b);
     const first = Math.min(...fnXs);
     const start = xs.findIndex((v, j) => v <= first && xs[j + 1] > first);
     if (start < 0) return null;
     const cells = [];
-    for (let j = start; j + 1 < xs.length; j++) if (xs[j + 1] - xs[j] >= 3) cells.push({ x0: xs[j], x1: xs[j + 1] });
+    for (let j = start; j + 1 < xs.length; j++) if (xs[j + 1] - xs[j] >= 3 * S) cells.push({ x0: xs[j], x1: xs[j + 1] });
     const holder = fnXs.map((v) => cells.findIndex((g) => v >= g.x0 && v < g.x1));
     if (holder.some((h) => h < 0)) return null;
     for (let a = 0; a < fnXs.length; a++) for (let b = a + 1; b < fnXs.length; b++) {
-      if (holder[a] === holder[b] && Math.abs(fnXs[a] - fnXs[b]) > 3) return null;
+      if (holder[a] === holder[b] && Math.abs(fnXs[a] - fnXs[b]) > 3 * S) return null;
     }
     return { cells, pitch: median(cells.map((g) => g.x1 - g.x0)) };
   }
@@ -621,27 +639,27 @@ footer .version { font-size: 12px; font-variant-numeric: tabular-nums; letter-sp
   // The three availability cells from the drawn borders: the vertical lines between the name column and the
   // grid that run through the people rows, plus the grid's left edge closing the last cell. Returns null unless
   // that gives exactly three cells.
-  function availabilityCells(borders, gridLeft, labelX, nameYs) {
+  function availabilityCells(borders, gridLeft, labelX, nameYs, S = 1) {
     if (!borders || !nameYs.length) return null;
     const top = Math.max(...nameYs), bottom = Math.min(...nameYs);
-    const edges = borders.v.filter((l) => l.at > labelX + 20 && l.at < gridLeft - 1 && l.from <= bottom + 5 && l.to >= top)
+    const edges = borders.v.filter((l) => l.at > labelX + 20 * S && l.at < gridLeft - 1 * S && l.from <= bottom + 5 * S && l.to >= top)
       .map((l) => l.at).sort((a, b) => a - b);
     edges.push(gridLeft);
     const cells = [];
-    for (let j = 0; j + 1 < edges.length; j++) if (edges[j + 1] - edges[j] >= 3) cells.push({ x0: edges[j], x1: edges[j + 1] });
+    for (let j = 0; j + 1 < edges.length; j++) if (edges[j + 1] - edges[j] >= 3 * S) cells.push({ x0: edges[j], x1: edges[j + 1] });
     return cells.length === 3 ? cells : null;
   }
 
   // Groups the left edges of X and / marks into the three availability columns. Returns null unless exactly
   // three clear columns show up, so a page we can't read gives "unknown" rather than a wrong reading.
-  function availabilitySlots(xs) {
+  function availabilitySlots(xs, S = 1) {
     const groups = [];
     for (const v of [...xs].sort((a, b) => a - b)) {
       const g = groups[groups.length - 1];
-      if (g && v - g.last < 3) { g.sum += v; g.n++; g.last = v; } else groups.push({ sum: v, n: 1, last: v });
+      if (g && v - g.last < 3 * S) { g.sum += v; g.n++; g.last = v; } else groups.push({ sum: v, n: 1, last: v });
     }
     const real = groups.filter((g) => g.n >= 2).sort((a, b) => b.n - a.n).slice(0, 3).map((g) => g.sum / g.n).sort((a, b) => a - b);
-    if (real.length !== 3 || real[1] - real[0] < 6 || real[2] - real[1] < 6) return null;
+    if (real.length !== 3 || real[1] - real[0] < 6 * S || real[2] - real[1] < 6 * S) return null;
     return real;
   }
 
