@@ -329,7 +329,91 @@ footer { color: var(--muted); font-size: 13px; }
     return `${h12}:${String(t.minute).padStart(2, '0')}${ap}`;
   }
 
-  function parsePage(items, pageIndex) {
+  // The cell borders Excel draws, read from the page's drawing commands (pdf.js operator list): thin filled
+  // rectangles, or stroked straight lines. Returns horizontal and vertical lines in page coordinates, the same
+  // space as the text positions. White lines are skipped, since they don't show on the printed schedule.
+  function linesFromOps(opList, OPS) {
+    const out = [];
+    const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3],
+      m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+    const at = (m, px, py) => [m[0] * px + m[2] * py + m[4], m[1] * px + m[3] * py + m[5]];
+    const light = (c) => {
+      if (c == null) return false;
+      let rgb = c;
+      if (typeof c === 'string') { const m = c.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i); if (!m) return false; rgb = m.slice(1).map((h) => parseInt(h, 16)); }
+      return rgb[0] >= 240 && rgb[1] >= 240 && rgb[2] >= 240;
+    };
+    const add = (x0, y0, x1, y1) => {
+      const w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
+      if (h <= 1.5 && w >= 3) out.push({ dir: 'h', at: (y0 + y1) / 2, from: Math.min(x0, x1), to: Math.max(x0, x1) });
+      else if (w <= 1.5 && h >= 3) out.push({ dir: 'v', at: (x0 + x1) / 2, from: Math.min(y0, y1), to: Math.max(y0, y1) });
+    };
+    const FILLS = new Set([OPS.fill, OPS.eoFill]);
+    const STROKES = new Set([OPS.stroke, OPS.closeStroke]);
+    const BOTH = new Set([OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+    let ctm = [1, 0, 0, 1, 0, 0], fill = null, stroke = null, paths = [];
+    const stack = [];
+    for (let i = 0; i < opList.fnArray.length; i++) {
+      const fn = opList.fnArray[i], a = opList.argsArray[i];
+      if (fn === OPS.save) stack.push([ctm, fill, stroke]);
+      else if (fn === OPS.restore) { if (stack.length) [ctm, fill, stroke] = stack.pop(); }
+      else if (fn === OPS.transform) ctm = mul(ctm, a);
+      else if (fn === OPS.setFillRGBColor) fill = a;
+      else if (fn === OPS.setStrokeRGBColor) stroke = a;
+      else if (fn === OPS.constructPath) {
+        const [ops, args] = a; let j = 0, cur = null;
+        for (const o of ops) {
+          if (o === OPS.rectangle) {
+            const [rx, ry, rw, rh] = [args[j], args[j + 1], args[j + 2], args[j + 3]]; j += 4;
+            paths.push({ pts: [[rx, ry], [rx + rw, ry], [rx + rw, ry + rh], [rx, ry + rh], [rx, ry]].map(([px, py]) => at(ctm, px, py)) });
+            cur = null;
+          } else if (o === OPS.moveTo) { cur = { pts: [at(ctm, args[j], args[j + 1])] }; paths.push(cur); j += 2; }
+          else if (o === OPS.lineTo) { if (cur) cur.pts.push(at(ctm, args[j], args[j + 1])); j += 2; }
+          else if (o === OPS.curveTo) { if (cur) cur.curved = true; j += 6; }
+          else if (o === OPS.curveTo2 || o === OPS.curveTo3) { if (cur) cur.curved = true; j += 4; }
+          else if (o === OPS.closePath) { if (cur) cur.pts.push(cur.pts[0]); }
+        }
+      } else if (fn === OPS.endPath) paths = [];
+      else if (FILLS.has(fn) || STROKES.has(fn) || BOTH.has(fn)) {
+        for (const p of paths) {
+          if (p.curved) continue;
+          if (!STROKES.has(fn) && !light(fill)) {
+            const xs = p.pts.map((q) => q[0]), ys = p.pts.map((q) => q[1]);
+            add(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
+          }
+          if (!FILLS.has(fn) && !light(stroke)) for (let k = 1; k < p.pts.length; k++) add(...p.pts[k - 1], ...p.pts[k]);
+        }
+        paths = [];
+      }
+    }
+    return out;
+  }
+
+  // Merges border pieces that sit on the same line (Excel often draws one line as many short pieces).
+  function bordersFrom(lines) {
+    if (!lines || !lines.length) return null;
+    const merge = (list) => {
+      const out = [];
+      for (const l of [...list].sort((a, b) => a.at - b.at)) {
+        const g = out[out.length - 1];
+        if (g && l.at - g.last <= 1) { g.sum += l.at; g.n++; g.last = l.at; g.from = Math.min(g.from, l.from); g.to = Math.max(g.to, l.to); }
+        else out.push({ sum: l.at, n: 1, last: l.at, from: l.from, to: l.to });
+      }
+      return out.map((g) => ({ at: g.sum / g.n, from: g.from, to: g.to }));
+    };
+    return { v: merge(lines.filter((l) => l.dir === 'v')), h: merge(lines.filter((l) => l.dir === 'h')) };
+  }
+
+  const nearestIndex = (list, v) => { let best = 0; for (let j = 1; j < list.length; j++) if (Math.abs(list[j] - v) < Math.abs(list[best] - v)) best = j; return best; };
+
+  // Numbers columns by their slot on the page, counting from the first one (so a blank spacer column still
+  // counts), always increasing. These numbers are part of each calendar event's ID, so they must stay stable.
+  function slotNumbers(centres, first, pitch) {
+    let prev = -Infinity;
+    return centres.map((c) => (prev = Math.max(Math.round((c - first) / pitch), prev + 1)));
+  }
+
+  function parsePage(items, pageIndex, lines) {
     const warnings = [];
     const all = items.filter((i) => i.str && i.str.trim());
     const up = all.filter((i) => isUpright(i.transform));
@@ -350,37 +434,64 @@ footer { color: var(--muted); font-size: 13px; }
     const fnLabel = up.find((i) => i.str.trim() === 'Function');
     if (!fnLabel) return { error: `Page ${pageIndex + 1}: no "Function" row found, skipped.` };
     const labelX = x(fnLabel);
-    const rowY = {};
+    const borders = bordersFrom(lines);
+    // Rows: two pieces of text are on the same row when they sit between the same pair of drawn horizontal
+    // borders. Without borders (or for text outside them), when their baselines are within 2.5 pt.
+    const rowLines = borders ? borders.h.filter((l) => l.from <= labelX + 5 && l.to >= labelX + 100).map((l) => l.at).sort((a, b) => b - a) : [];
+    const midY = (i) => y(i) + fs(i.transform) * 0.3;
+    const bandOf = (i) => {
+      if (rowLines.length < 3) return null;
+      const m = midY(i);
+      for (let j = 0; j + 1 < rowLines.length; j++) if (m < rowLines[j] && m > rowLines[j + 1]) return j;
+      return null;
+    };
+    const sameRow = (a, b) => { const ba = bandOf(a), bb = bandOf(b); return ba != null && bb != null ? ba === bb : Math.abs(y(a) - y(b)) < 2.5; };
+    const rowY = {}, rowLabel = {};
     for (const i of up) {
       const key = HEADER_ROWS[i.str.trim()];
-      if (key && !(key in rowY)) rowY[key] = y(i);
+      if (key && !(key in rowY)) { rowY[key] = y(i); rowLabel[key] = i; }
     }
-    const rowItems = (yy) => up.filter((i) => Math.abs(y(i) - yy) < 2.5 && x(i) > labelX + 60);
-    const fnItems = rowItems(rowY.func).sort((a, b) => x(a) - x(b));
+    const rowItems = (key) => up.filter((i) => sameRow(i, rowLabel[key]) && x(i) > labelX + 60);
+    const fnItems = rowItems('func').sort((a, b) => x(a) - x(b));
     if (!fnItems.length) return { error: `Page ${pageIndex + 1}: "Function" row is empty, skipped.` };
 
     // Columns are anchored to where the header cells actually sit, not to a grid with an assumed spacing.
     // Exports come at different scales (about 35 pt between columns some weeks, 24.6 pt others), and a
     // grid with the wrong spacing silently runs two neighbouring events together.
     const c0 = cx(fnItems[0]);
-    const { anchors, pitch } = columnAnchors(fnItems.map(cx),
-      ['uniform', 'guests', 'intime', 'needed'].filter((k) => rowY[k] != null).flatMap((k) => rowItems(rowY[k]).map(cx)));
-    // Number each column by its slot on the page (so a blank spacer column still counts), keeping numbers increasing.
-    let prevIndex = -Infinity;
-    const anchorIndex = anchors.map((a) => (prevIndex = Math.max(Math.round((a - c0) / pitch), prevIndex + 1)));
-    const colOf = (xx) => {
-      let best = 0;
-      for (let j = 1; j < anchors.length; j++) if (Math.abs(anchors[j] - xx) < Math.abs(anchors[best] - xx)) best = j;
-      if (Math.abs(anchors[best] - xx) <= pitch / 2) return anchorIndex[best];
-      const k = Math.round((xx - c0) / pitch); // off every known column: give it a column of its own
-      return anchorIndex.includes(k) ? anchorIndex[best] : k;
+    const headerItems = ['func', 'uniform', 'guests', 'intime', 'needed'].filter((k) => rowLabel[k]).flatMap((k) => rowItems(k));
+    // Two independent readings of the columns. By text: where the header cells' text lines up.
+    const text = columnAnchors(fnItems.map(cx), headerItems.filter((i) => !fnItems.includes(i)).map(cx));
+    const textIndex = slotNumbers(text.anchors, c0, text.pitch);
+    const textColOf = (xx) => {
+      const best = nearestIndex(text.anchors, xx);
+      if (Math.abs(text.anchors[best] - xx) <= text.pitch / 2) return textIndex[best];
+      const k = Math.round((xx - c0) / text.pitch); // off every known column: give it a column of its own
+      return textIndex.includes(k) ? textIndex[best] : k;
     };
+    // By borders: the cells between the drawn vertical lines that cross the Function row. This is the real grid,
+    // so it wins whenever it makes sense; otherwise (no borders, or merged header cells) the text reading is used.
+    const grid = borderColumns(borders, midY(fnLabel), fnItems.map(cx));
+    const cellIndex = grid ? slotNumbers(grid.cells.map((g) => (g.x0 + g.x1) / 2), (grid.cells[0].x0 + grid.cells[0].x1) / 2, grid.pitch) : null;
+    const cellAt = (xx) => (grid ? grid.cells.findIndex((g) => xx >= g.x0 && xx < g.x1) : -1);
+    const colOf = (xx) => { const j = cellAt(xx); return j >= 0 ? cellIndex[j] : textColOf(xx); };
+    const pitch = grid ? grid.pitch : text.pitch;
+    const gridLeft = grid ? grid.cells[0].x0 : c0 - pitch / 2;
+    // Where the two readings put the same header text in different columns, flag those columns.
+    const disputed = new Set();
+    if (grid) {
+      for (const i of headerItems) {
+        const j = cellAt(cx(i));
+        const k = cellAt(text.anchors[nearestIndex(text.anchors, cx(i))]);
+        if (j >= 0 && j !== k) { disputed.add(cellIndex[j]); if (k >= 0) disputed.add(cellIndex[k]); }
+      }
+    }
 
     const cols = {};
     const col = (k) => (cols[k] = cols[k] || { index: k, labels: [] });
-    for (const [key, yy] of Object.entries(rowY)) {
+    for (const key of Object.keys(rowY)) {
       if (key === 'scheduled' || key === 'shortage') continue;
-      for (const i of rowItems(yy)) {
+      for (const i of rowItems(key)) {
         const c = col(colOf(cx(i)));
         c[key] = c[key] ? c[key] + ' ' + i.str.trim() : i.str.trim();
       }
@@ -399,21 +510,25 @@ footer { color: var(--muted); font-size: 13px; }
       const xb = mx + dx * steps;
       col(colOf(xb)).labels.push(i.str.trim());
     }
-    for (const c of Object.values(cols)) c.location = c.labels.join(' / ');
+    for (const c of Object.values(cols)) {
+      c.location = c.labels.join(' / ');
+      c.warnings = disputed.has(c.index)
+        ? ["The schedule's drawn borders and its text alignment disagree about this column, so it may be misread. Check the PDF."] : [];
+    }
 
     // People rows
     const headerBottom = Math.min(...Object.values(rowY));
     const nameItems = up.filter((i) => Math.abs(x(i) - labelX) < 3 && y(i) < headerBottom - 3 && /[A-Za-z]/.test(i.str) && !HEADER_ROWS[i.str.trim()]);
     // Section markers ("BAR", "BACK AISLE", or any other) are all-caps labels on a row of their own, left of the grid.
     const sectionMarks = up.filter((i) => /^[A-Z][A-Z &/'-]{2,}$/.test(i.str.trim()) && x(i) < c0 - pitch && y(i) < headerBottom - 3
-      && !nameItems.some((n) => Math.abs(y(n) - y(i)) < 2.5))
+      && !nameItems.some((n) => sameRow(n, i)))
       .map((i) => { const t = i.str.trim().replace(/\s+/g, ' '); return { y: y(i), name: t[0] + t.slice(1).toLowerCase() }; })
       .sort((a, b) => b.y - a.y);
     const sectionAt = (yy) => { let s = 'Banquets'; for (const m of sectionMarks) if (yy < m.y) s = m.name; return s; };
     const people = [];
     for (const n of nameItems) {
       const yy = y(n);
-      const row = up.filter((i) => i !== n && Math.abs(y(i) - yy) < 2.5);
+      const row = up.filter((i) => i !== n && sameRow(i, n));
       const prefixItem = row.find((i) => x(i) < labelX && /^(FT|PT|OC|IH)$/.test(i.str.trim()));
       const name = n.str.trim().replace(/\s+/g, ' ');
       const section = sectionAt(yy);
@@ -421,7 +536,7 @@ footer { color: var(--muted); font-size: 13px; }
       for (const i of row) {
         if (i === prefixItem || x(i) < x(n) + n.width - 1) continue;
         const v = i.str.trim();
-        if (cx(i) < c0 - pitch / 2) { notes.push(v); marks.push({ x: x(i), v }); continue; }
+        if (cx(i) < gridLeft) { notes.push(v); marks.push({ x: x(i), v }); continue; }
         const k = colOf(cx(i));
         (cells[k] = cells[k] || []).push(v);
       }
@@ -442,7 +557,8 @@ footer { color: var(--muted); font-size: 13px; }
       }
       delete p.marks;
     }
-    return { pageIndex, date: iso, dateLabel: dateStr, weekday, cols, people, pitch, c0, availKnown: !!slotXs, warnings };
+    return { pageIndex, date: iso, dateLabel: dateStr, weekday, cols, people, pitch, c0, availKnown: !!slotXs, warnings,
+      columnSource: grid ? 'borders' : 'text', rowSource: rowLines.length >= 3 ? 'borders' : 'text' };
   }
 
   // Column centres from the Function row (one short letter code per column, so the most reliable row), plus any
@@ -465,6 +581,25 @@ footer { color: var(--muted); font-size: 13px; }
     if (anchors.length > 1) anchors = cluster(fnXs, pitch * 0.3); // merge any split Function cell
     const extra = cluster(otherXs.filter((v) => anchors.every((a) => Math.abs(v - a) > pitch / 2)), pitch * 0.3);
     return { anchors: [...anchors, ...extra].sort((a, b) => a - b), pitch };
+  }
+
+  // Column cells from the drawn vertical borders that cross the Function row, starting with the cell that holds the
+  // first Function letter. Returns null unless the borders make sense: every Function letter sits in a cell, and no
+  // cell holds two of them (which would mean a merged header cell, or borders we misread).
+  function borderColumns(borders, fnY, fnXs) {
+    if (!borders) return null;
+    const xs = borders.v.filter((l) => l.from <= fnY && l.to >= fnY).map((l) => l.at).sort((a, b) => a - b);
+    const first = Math.min(...fnXs);
+    const start = xs.findIndex((v, j) => v <= first && xs[j + 1] > first);
+    if (start < 0) return null;
+    const cells = [];
+    for (let j = start; j + 1 < xs.length; j++) if (xs[j + 1] - xs[j] >= 3) cells.push({ x0: xs[j], x1: xs[j + 1] });
+    const holder = fnXs.map((v) => cells.findIndex((g) => v >= g.x0 && v < g.x1));
+    if (holder.some((h) => h < 0)) return null;
+    for (let a = 0; a < fnXs.length; a++) for (let b = a + 1; b < fnXs.length; b++) {
+      if (holder[a] === holder[b] && Math.abs(fnXs[a] - fnXs[b]) > 3) return null;
+    }
+    return { cells, pitch: median(cells.map((g) => g.x1 - g.x0)) };
   }
 
   // Groups the left edges of X and / marks into the three availability columns. Returns null unless exactly
@@ -492,7 +627,7 @@ footer { color: var(--muted); font-size: 13px; }
       // The CB columns are the daily AM / PM coffee break events, labeled "AM Breaks" / "PM Break".
       // The label, not the clock, decides which one it is.
       const breakType = isBreakCol ? ((c.location.match(/^\s*(AM|PM)\b/i) || [])[1] || '').toUpperCase() || null : null;
-      const warnings = [];
+      const warnings = [...(c.warnings || [])];
       // Managers and back-aisle staff (rows with no FT/PT/OC/IH prefix) don't work coffee breaks: the AM Breaks
       // column holds their in-time for the day, and the PM Break column doesn't apply to them.
       if (isBreakCol && !person.prefix) {
@@ -668,8 +803,9 @@ footer { color: var(--muted); font-size: 13px; }
 
   function parseDocument(pages) {
     const days = [], errors = [];
-    pages.forEach((items, i) => {
-      const p = parsePage(items, i);
+    // Each page is either its text items, or { items, lines } with the drawn borders from linesFromOps.
+    pages.forEach((pg, i) => {
+      const p = Array.isArray(pg) ? parsePage(pg, i) : parsePage(pg.items, i, pg.lines);
       if (p.error) errors.push(p.error); else days.push(p);
     });
     const people = new Map();
@@ -753,7 +889,7 @@ footer { color: var(--muted); font-size: 13px; }
     return { text: lines.filter((l) => l !== null).map(fold).join('\r\n') + '\r\n', count };
   }
 
-  const api = { parseTime, readTime, formatTime, parsePage, parseDocument, scheduleFor, shiftsFor, crewFor, crewGroups, giveAwayFor, icsFor, FUNCTION_NAMES, AVAIL_SLOTS, defaultHours };
+  const api = { parseTime, readTime, formatTime, parsePage, parseDocument, linesFromOps, bordersFrom, scheduleFor, shiftsFor, crewFor, crewGroups, giveAwayFor, icsFor, FUNCTION_NAMES, AVAIL_SLOTS, defaultHours };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BQT = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -808,10 +944,17 @@ footer { color: var(--muted); font-size: 13px; }
       if (!window.pdfjsLib) throw new Error('The PDF reader did not load. Check your connection and reload the page.');
       const pdf = await pdfjsLib.getDocument({ data, verbosity: 0, isEvalSupported: false }).promise;
       const pages = [];
-      for (let i = 1; i <= pdf.numPages; i++) pages.push((await (await pdf.getPage(i)).getTextContent()).items);
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const items = (await page.getTextContent()).items;
+        // The drawn cell borders, when they can be read. Without them the parser lines columns up by text alone.
+        let lines = null;
+        try { lines = BQT.linesFromOps(await page.getOperatorList(), pdfjsLib.OPS); } catch (e) { lines = null; }
+        pages.push({ items, lines });
+      }
       const doc = BQT.parseDocument(pages);
       if (!doc.days.length) {
-        const textless = pages.every((p) => !p.some((i) => i.str && i.str.trim()));
+        const textless = pages.every((p) => !p.items.some((i) => i.str && i.str.trim()));
         throw new Error(textless
           ? 'This PDF has no text in it, so it was probably scanned or photographed. Use the PDF exported from Excel.'
           : "This PDF doesn't look like a banquet service schedule: no page has a Function row.");

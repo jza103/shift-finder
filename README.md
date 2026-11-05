@@ -37,7 +37,7 @@ If a revised schedule comes out, do the same thing again. Each event has a stabl
 
 - End times are estimates, because the schedule doesn't list them. Evening shifts are 6 hours and earlier shifts are 4 hours.
 - When a cell or column lists more than one in-time, the earliest one is shown, with a **Check**. Better early than late.
-- Columns are found from where the Function cells sit on the page, so exports at any zoom or column width read the same way. A column header that still holds two events gets a **Check**.
+- Columns and rows are read from the cell borders drawn in the PDF. The columns are also worked out separately from where the header text lines up. If the borders can't be read (or a header cell is merged), the text alignment is used instead. If the two readings disagree about a column, or a column header still holds two events, that shift gets a **Check**. Exports at any zoom or column width read the same way.
 - Items marked **Check** are cells that don't add up. For example, a shift letter that doesn't match its column usually means a typo on the schedule. Confirm these with the schedule maker.
 - Only the PDF exported from Excel works. Scans and photos don't.
 
